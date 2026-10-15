@@ -33,10 +33,27 @@ def load_prompts() -> list[str]:
     ]
 
 
+def timed_run(model, tokenizer, full: str, max_tokens: int, sampler):
+    # NOTE: mlx-lm >= 0.26: generate() returns plain text, so metrics must
+    # come from stream_generate's final GenerationResponse (prompt_tps,
+    # generation_tps, peak_memory). sampler fixes temperature (0.0 = greedy,
+    # deterministic numbers).
+    from mlx_lm import stream_generate  # local import: heavy, only needed here
+
+    t0 = time.perf_counter()
+    for resp in stream_generate(
+        model, tokenizer, prompt=full, max_tokens=max_tokens, sampler=sampler
+    ):
+        pass
+    return resp, time.perf_counter() - t0
+
+
 def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
-    from mlx_lm import load, generate  # local import: heavy, only needed here
+    from mlx_lm import load  # local import: heavy, only needed here
+    from mlx_lm.sample_utils import make_sampler
 
     model, tokenizer = load(model_path)
+    sampler = make_sampler(temp=0.0)
     out = {"model": model_path, "repeats": repeats, "runs": []}
 
     apply_chat = hasattr(tokenizer, "apply_chat_template")
@@ -54,16 +71,15 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
 
         # Warmup (discarded): first run compiles Metal kernels, so it would
         # poison the measurement. Short max_tokens keeps it cheap.
-        generate(model, tokenizer, prompt=full, max_tokens=32, verbose=False)
+        timed_run(model, tokenizer, full, 32, sampler)
 
         for _ in range(repeats):
-            t0 = time.perf_counter()
-            resp = generate(
-                model, tokenizer, prompt=full, max_tokens=256, verbose=False
-            )
-            dt = time.perf_counter() - t0
+            resp, dt = timed_run(model, tokenizer, full, 256, sampler)
             # getattr fallbacks: field names differ across mlx-lm versions;
             # a missing metric is recorded as null, never faked.
+            # peak_memory units also differ (bytes vs GB): over 1000 must be bytes.
+            peak = getattr(resp, "peak_memory", None) or 0
+            peak_gb = round(peak / 1e9, 3) if peak > 1000 else (round(peak, 3) or None)
             out["runs"].append(
                 {
                     "prompt": prompt[:80],
@@ -71,11 +87,7 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
                     "prompt_tps": getattr(resp, "prompt_tps", None),
                     "generation_tokens": getattr(resp, "generation_tokens", None),
                     "generation_tps": getattr(resp, "generation_tps", None),
-                    "peak_memory_gb": (
-                        round(getattr(resp, "peak_memory", 0) / 1e9, 3)
-                        if getattr(resp, "peak_memory", None)
-                        else None
-                    ),
+                    "peak_memory_gb": peak_gb,
                     "wall_seconds": round(dt, 3),
                 }
             )

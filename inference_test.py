@@ -24,9 +24,15 @@ TEMPERATURE = 0.7
 
 
 def run(model_path: str, prompts: list[str]) -> dict:
-    from mlx_lm import load, generate
+    # NOTE: mlx-lm >= 0.26 removed generate()'s sampler kwargs and made it
+    # return plain text. stream_generate yields GenerationResponse objects
+    # (text segments + metrics), so we collect text and keep the last
+    # response. Temperature goes through make_sampler, not a kwarg.
+    from mlx_lm import load, stream_generate
+    from mlx_lm.sample_utils import make_sampler
 
     model, tokenizer = load(model_path)
+    sampler = make_sampler(temp=TEMPERATURE)
     apply_chat = hasattr(tokenizer, "apply_chat_template")
     cases = []
     for prompt in prompts:
@@ -40,11 +46,13 @@ def run(model_path: str, prompts: list[str]) -> dict:
                 )
             except Exception:
                 full = prompt
-        resp = generate(
+        text = ""
+        for resp in stream_generate(
             model, tokenizer, prompt=full,
-            max_tokens=MAX_TOKENS, temp=TEMPERATURE, verbose=False,
-        )
-        cases.append({"prompt": prompt, "output": resp.text})
+            max_tokens=MAX_TOKENS, sampler=sampler,
+        ):
+            text += resp.text
+        cases.append({"prompt": prompt, "output": text})
     return {"model": model_path, "temperature": TEMPERATURE,
             "max_tokens": MAX_TOKENS, "cases": cases}
 
