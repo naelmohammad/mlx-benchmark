@@ -4,6 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+: "${HF_TOKEN:?Set HF_TOKEN first: export HF_TOKEN=\"hf_...\" (see README Setup)}"
+export HF_TOKEN HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
+
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3-8B}"
 SHORT="$(basename "$MODEL_ID")"
 HF_DIR="models/${SHORT}-hf"

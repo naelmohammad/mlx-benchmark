@@ -19,10 +19,24 @@ download size; 4-bit MLX is roughly a quarter of that.
 | OpenAI | gpt-oss-20b | `openai/gpt-oss-20b` | ~40 GB | Apache 2.0, built for agents/tool use |
 | Alibaba (older) | Qwen2.5-32B Instruct | `Qwen/Qwen2.5-32B-Instruct` | ~64 GB | Battle-tested baseline to compare newer models against |
 
-Download any of them the same way (login first only for gated):
+`HF_TOKEN` is required for these labs. How to generate one:
+
+1. Sign up / log in at [huggingface.co](https://huggingface.co/join).
+2. Open [Settings → Access Tokens](https://huggingface.co/settings/tokens).
+3. Click **Create new token**, give it a name (e.g. `mlx-lab`), type **Read**,
+   and create. (Fine-grained tokens work too — it only needs read access to
+   public and gated repos you've been granted.)
+4. Copy the token (it starts with `hf_`) — it is shown once.
+5. For gated models (Llama, Gemma, Qwen-Coder), also open the model's HF
+   page and click through its license agreement; access is usually granted
+   instantly, and the download fails until then.
+
+Export it before any download — the CLI sends it even for public models,
+which avoids anonymous rate limits, and gated models refuse without it:
 
 ```bash
-uv run huggingface-cli login            # gated models only, paste an HF token
+export HF_TOKEN="hf_..."
+uv run huggingface-cli login --token "$HF_TOKEN"   # persists it for CLI use
 uv run huggingface-cli download <HF_ID> --local-dir "models/<name>-hf"
 ```
 

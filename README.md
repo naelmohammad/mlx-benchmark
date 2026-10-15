@@ -18,14 +18,16 @@ every term this README uses.
 
 - Apple Silicon Mac, Python 3.12+, `uv`, `git`, `curl`
 - ~40 GB free disk (HF weights + bf16 MLX + 4-bit MLX for the 8B default)
-- A [Hugging Face token](https://huggingface.co/settings/tokens) only for
-  gated models (Qwen3-8B is public — no token needed)
+- A [Hugging Face token](https://huggingface.co/settings/tokens) — **required
+  for these labs**, including for public models (avoids rate limits) and
+  mandatory for gated ones (Llama, Gemma, Qwen-Coder)
 
 ## Setup
 
 ```bash
 uv venv --python 3.12
 uv sync
+export HF_TOKEN="hf_..."   # required: every download step uses it
 ```
 
 (`uv run` below uses that project-local `.venv` automatically.)
