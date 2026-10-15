@@ -114,11 +114,12 @@ def main() -> None:
                 r["prompt"] = prompt[:80]
                 runs.append(r)
     except urllib.error.URLError as e:
+        # NOTE: keep this message paste-safe — no <angle-bracket> placeholders,
+        # zsh treats them as redirects. Use the real default model path.
         raise SystemExit(
             f"Cannot reach a server at {args.base_url} ({e.reason}).\n"
-            f"Start it first, e.g. terminal 1:\n"
-            f"  uv run mlx_lm.server --model models/<your>-mlx-4bit --port 8000\n"
-            f"then re-run this command."
+            f"Start a server first (separate terminal), then re-run:\n"
+            f"  uv run mlx_lm.server --model models/Qwen3-8B-mlx-4bit --port 8000"
         )
     out = {"engine_tag": args.tag, "base_url": args.base_url,
            "model": args.model, "repeats": args.repeats, "runs": runs}
