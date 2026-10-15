@@ -284,5 +284,30 @@ Race it with `bench_engines.py --tag rapid-mlx` per README step 6.
 
 </details>
 
+**E. aiperf (independent validator).** NVIDIA's profiler speaks plain
+OpenAI protocol, so it benchmarks our servers unchanged — and its numbers
+cross-check ours (qwen3.5:4b-mlx via Ollama: aiperf 127.8 tok/s and 7.77ms
+ITL p50 vs our 136 tok/s and 8.6ms — same ballpark, different prompts):
+
+```bash
+uvx --python 3.12 aiperf profile --model qwen3.5:4b-mlx --endpoint-type chat \
+  --streaming --url http://localhost:11434 --tokenizer Qwen/Qwen3.5-4B \
+  --num-requests 20 --output-artifact-dir /tmp/aiperf-run
+uv run python import_aiperf.py \
+  --export /tmp/aiperf-run/profile_export_aiperf.json --tag aiperf-qwen35
+```
+
+The importer writes `results/engines_aiperf-<tag>.json`; the report shows it
+as a labeled `aiperf*` row, never blended into per-run distributions.
+(Install note: force `--python 3.12` — the default 3.14 env fails building
+`pyzmq` from source.)
+
+**Companion (watch, don't benchmark):**
+[mlx-cockpit](https://github.com/amgeneral6/mlx-cockpit) adds live
+`/v1/metrics` + dashboard to mlx_lm servers. It watches while this lab
+measures — optional, and note its installer patches your installed `mlx_lm`
+(backups included). (Not to be confused with `mlx_monitor`, which is
+Mellanox NIC tooling.)
+
 Rule of thumb: learn with A, daily-drive with B, debug with C, verify hype
-with D.
+with D, cross-check with E.

@@ -133,6 +133,26 @@ def collect() -> dict:
                     "levels": d.get("levels"), "points": d["frontier"]})
             continue
         runs = d["runs"]
+        if not runs and "aiperf_summary" in d:
+            # aiperf imports carry verbatim aggregates, not per-run rows:
+            # display them labeled, never blend into our distributions.
+            s = d["aiperf_summary"]
+            report["race"].append({
+                "engine": f"{d['engine_tag']}*",
+                "model": d["model"], "repeats": d.get("repeats"),
+                "concurrency": d.get("concurrency", 1),
+                "ttft_s": s.get("ttft_s"), "ttft": {},
+                "itl_p50_ms": (round(s["itl_p50_ms"], 2)
+                               if s.get("itl_p50_ms") is not None else None),
+                "decode_rate": (round(s["decode_rate"], 1)
+                                if s.get("decode_rate") is not None else None),
+                "rate_unit": s.get("rate_unit", "tokens/sec"),
+                "decode": {}, "cpu_mean": None, "mem_gb_mean": None,
+                "throttle": None, "gpu": None,
+                "errors": None, "source": "aiperf aggregates",
+                "aiperf_version": d.get("aiperf_version"),
+            })
+            continue
         rate = mean(runs, "tokens_per_sec")
         unit = "tok/s" if rate is not None else "chars/s"
         key = "tokens_per_sec" if rate is not None else "chars_per_sec"
@@ -379,6 +399,10 @@ def render_md(r: dict, charts_dir: str = "charts") -> str:
                          f"{e['itl_p50_ms']} | "
                          f"{e['decode_rate']} {e['rate_unit']} | "
                          f"{e['cpu_mean']} | {e['mem_gb_mean']} |")
+        if any(e.get("source") == "aiperf aggregates" for e in r["race"]):
+            lines.append("_Rows marked * are aiperf aggregates (independent "
+                         "validator, different prompts), not our per-run "
+                         "distributions._")
         lines += ["",
                   "_Methodology: same prompts, temperature 0, one warmup run "
                   "discarded per prompt, means over repeats. TTFT = "
@@ -461,6 +485,8 @@ def render_md(r: dict, charts_dir: str = "charts") -> str:
     for b in r["inprocess"]:
         lines.append(f"- `{b['build']}`: throttle ×{b.get('throttle')}")
     for e in r["race"]:
+        if e.get("source"):
+            continue  # aiperf imports carry no throttle/telemetry series
         gpu = e.get("gpu") or {}
         g = (f"{gpu.get('power_w')} W" if gpu.get("power_w") is not None
              else gpu.get("unavailable", "no GPU telemetry"))
@@ -688,9 +714,15 @@ def render_xlsx(r: dict, path: Path) -> None:
         ws.append([b["build"], d["mean"], d["p50"], d["p95"], d["max"],
                    d["n"]])
     for e in r["race"]:
-        d = e["decode"]
-        ws.append([f"{e['engine']}:{e['model']}", d["mean"], d["p50"],
-                   d["p95"], d["max"], d["n"]])
+        d = e["decode"] or {}
+        if d.get("mean") is None and e.get("source"):
+            # aiperf imports have aggregates, not distributions: one labeled row.
+            ws.append([f"{e['engine']}:{e['model']}",
+                       f"aiperf avg {e.get('decode_rate')} "
+                       f"{e.get('rate_unit')} (n={e.get('repeats')})"])
+            continue
+        ws.append([f"{e['engine']}:{e['model']}", d.get("mean"), d.get("p50"),
+                   d.get("p95"), d.get("max"), d.get("n")])
     if r["errors"]:
         ws.append([])
         ws.append([f"Errors: {len(r['errors'])} errored run(s), see JSON/CSV"])
