@@ -10,6 +10,10 @@ Default model is small on purpose (`Qwen/Qwen3-8B`, ~16 GB download) so the
 whole loop finishes in one sitting. Scale up with `MODEL_ID` once you trust
 the pipeline.
 
+New to the terminology (quantization, KV cache, TTFT, …)? Read
+[CONCEPTS.md](CONCEPTS.md) first — it explains every step's why/what/how and
+every term this README uses.
+
 ## Prerequisites
 
 - Apple Silicon Mac, Python 3.12+, `uv`, `git`, `curl`
