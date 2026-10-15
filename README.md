@@ -190,14 +190,18 @@ is *not* comparable to live-serving numbers, including ours.
 
 ### 7. Generate the report 📝
 
-- [ ] `REPORT.md` written and read
+- [ ] All six reports written and read
 
 ```bash
 uv run python make_report.py
+# writes REPORT.md + .html + .pdf + .xlsx + .json + .csv
+# single format: uv run python make_report.py --format pdf
 ```
 
-Merges every `results/*.json` into `REPORT.md`: machine specs, on-disk
-sizes, bf16-vs-4bit deltas, and the engine race table.
+Merges every `results/*.json` into six formats: machine specs, on-disk
+sizes, bf16-vs-4bit deltas, and the engine race table — as Markdown, styled
+HTML, PDF, spreadsheet (summary + per-run sheets with filters), raw JSON,
+and flat CSV.
 
 ### Rerun everything
 
@@ -208,7 +212,7 @@ sizes, bf16-vs-4bit deltas, and the engine race table.
 ## Results
 
 Results are yours and gitignored (`results/*.json`, `models/`). Commit
-`REPORT.md` only when you want to publish a run.
+`REPORT.*` only when you want to publish a run.
 
 ## Troubleshooting
 

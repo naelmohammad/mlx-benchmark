@@ -7,6 +7,8 @@ dependencies = [
     "mlx-lm>=0.22",
     "huggingface_hub>=0.27",
     "psutil>=6",
+    "openpyxl>=3.1.5",
+    "reportlab>=5.0.1",
 ]
 
 [tool.uv]
