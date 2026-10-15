@@ -252,6 +252,10 @@ discarded. Still off? Reproduce via `llama.cpp` to isolate the layer —
 - **Why warmup?** First run pays kernel-compilation and cache costs. We
   discard it so numbers reflect steady state.
 
+## Contributors
+
+- [Nael Mohammad](https://github.com/naelmohammad) — author and maintainer
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
