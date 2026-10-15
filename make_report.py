@@ -1,11 +1,14 @@
-"""Merge every results/*.json into REPORT.md.
+"""Step 7 of the lab: merge every results/*.json into REPORT.md.
+
+WHAT THIS IS FOR: turns raw JSON into the readable report — machine specs
+  (chip/RAM, because numbers without conditions are trivia), on-disk model
+  sizes, the bf16-vs-4-bit table, and the engine-race table with its
+  methodology footnote. Missing stages degrade gracefully ("not run yet").
+INPUTS:  results/bench_*.json, results/inference_*.json, results/engines_*.json.
+OUTPUTS: REPORT.md (the one file worth committing to publish a run).
 
 Usage:
     uv run python make_report.py [--report REPORT.md]
-
-Reads bench_*.json (in-process mlx-lm numbers), inference_*.json (which
-prompts were checked), and engines_*.json (server-vs-server race), and writes
-a Markdown report with machine specs, on-disk sizes, and comparison tables.
 """
 
 from __future__ import annotations
@@ -48,6 +51,8 @@ def dir_size_gb(path: Path) -> float | None:
 
 
 def mean(rows: list[dict], key: str):
+    # Skips nulls (e.g. a metric one mlx-lm version doesn't report) so one
+    # missing field can't sink a whole table; empty means "no data", not zero.
     vals = [r[key] for r in rows if r.get(key) is not None]
     return round(statistics.mean(vals), 1) if vals else None
 

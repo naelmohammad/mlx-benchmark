@@ -1,13 +1,17 @@
-"""Race OpenAI-compatible endpoints with identical prompts (server-vs-server).
+"""Step 6 of the lab: race OpenAI-compatible servers (mlx-lm vs Rapid-MLX vs …).
+
+WHAT THIS IS FOR: server-vs-server comparison with identical prompts. Streams
+  /v1/chat/completions via SSE and measures TTFT (time-to-first-token: the
+  snappiness you feel) plus decode rate. Temperature is fixed at 0.0 so every
+  engine does byte-identical work — otherwise sampling noise pollutes the race.
+HONESTY RULE: token counts come from the server's `usage` block when present;
+  otherwise the script reports chars/sec and says so — it never invents tokens.
+INPUTS:  a running server (--base-url), its served model name (--model).
+OUTPUTS: results/engines_<tag>.json (one file per engine raced).
 
 Usage (server already running in another terminal):
     uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \\
         --model "<served-model-name>" --tag mlx-lm [--repeats 3]
-
-Streams chat completions and measures time-to-first-token plus output rate.
-Token counts come from the server's `usage` block when present; otherwise the
-script reports chars/sec and says so — it never invents token counts.
-Writes results/engines_<tag>.json.
 """
 
 from __future__ import annotations
@@ -38,6 +42,8 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
     first_token_at = None
     chars = 0
     completion_tokens = None
+    # SSE stream: each "data:" line is one JSON chunk; "[DONE]" ends it.
+    # The clock starts before the request so TTFT includes network + prefill.
     with urllib.request.urlopen(req, timeout=300) as resp:
         for raw in resp:
             line = raw.decode("utf-8", "replace").strip()
@@ -55,6 +61,8 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
             if delta and first_token_at is None:
                 first_token_at = time.perf_counter()
             chars += len(delta)
+            # Some servers omit `usage` on streams (requested via
+            # stream_options.include_usage above); then we fall back to chars/sec.
             usage = chunk.get("usage") or {}
             if usage.get("completion_tokens"):
                 completion_tokens = usage["completion_tokens"]

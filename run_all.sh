@@ -1,6 +1,9 @@
 #!/bin/bash
-# Full mlx-lm pipeline: download -> convert -> quantize -> infer -> bench -> report.
-# Engine race vs Rapid-MLX is interactive (servers) — see README step 6.
+# run_all.sh — the whole mlx-lm pipeline in one command (README steps 1-5 + 7).
+# WHAT IT DOES: download (HF) -> convert (bf16 MLX) -> quantize (4-bit) ->
+#   inference transcripts -> benchmark -> REPORT.md. Override the model with
+#   MODEL_ID=<hf-id> ./run_all.sh. The engine race (step 6) stays interactive
+#   because it needs servers in separate terminals — see README step 6.
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -1,10 +1,15 @@
-"""Qualitative inference test: same prompts, bf16 vs 4-bit, transcripts saved.
+"""Step 4 of the lab: qualitative inference test (the quality gate).
+
+WHAT THIS IS FOR: answers the question benchmarks cannot — "did 4-bit break
+  coherence?" Asks every prompt in prompts.txt on each build and saves full
+  transcripts for you to READ. Speed numbers are meaningless until this passes.
+INPUTS:  prompts.txt; TEMPERATURE below (0.7 = natural chat variety).
+OUTPUTS: results/inference_<model-dir-name>.json (prompt + output pairs).
 
 Usage:
     uv run python inference_test.py [--model models/Qwen3-8B-mlx-4bit]
 
-Writes results/inference_<name>.json. Read it before trusting benchmark
-numbers: speed means nothing if 4-bit broke coherence.
+Default (no --model): tests the bf16 AND 4-bit pair side by side.
 """
 
 from __future__ import annotations

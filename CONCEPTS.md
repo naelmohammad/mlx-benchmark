@@ -4,6 +4,16 @@ Every step of the pipeline, and every jargon term it uses, in one place.
 Format per concept: **what** it is, **why** it matters here, and **where**
 you meet it in this repo.
 
+## How to use this guide
+
+| You have… | Read… |
+|---|---|
+| 5 minutes before running anything | [The big picture](#the-big-picture) + [Each pipeline step, in one line](#each-pipeline-step-in-one-line) |
+| 20 minutes alongside the lab | Each section's main text; skip the collapsed "Going deeper" boxes |
+| An evening and curiosity | Everything, including the collapsed boxes and the ✋ exercises |
+
+> ✋ = pause-and-try exercises. They are the actual learning — do them.
+
 ## The big picture
 
 An **LLM** (large language model) is a next-token predictor: given a sequence
@@ -15,6 +25,10 @@ fast it predicts.
 **Inference** is simply running a trained model to get outputs (as opposed to
 *training*, which adjusts its weights). All of this repo is inference: nobody
 here trains anything.
+
+> ✋ Try it: open `results/inference_*.json` after README step 4 and find one
+> answer where 4-bit visibly differs from bf16. That gap is the entire
+> quantization tradeoff in one example.
 
 ## The hardware: Apple Silicon and unified memory
 
@@ -62,6 +76,11 @@ visible. Related formats you'll meet elsewhere: **GGUF** (llama.cpp/Ollama's
 container, same idea, different layout) and **AWQ/GPTQ** (older GPU-targeted
 quant formats).
 
+> ✋ Try it: after step 3, run `du -sh models/*` and compute your actual
+> bf16 → 4-bit ratio. Then predict: if decode speed ≈ bandwidth ÷ model
+> bytes, how much faster *should* 4-bit decode be? Write it down — step 5
+> grades your prediction.
+
 ## Tokens, context, and chat templates
 
 A **token** is the model's unit of text — roughly ¾ of an English word.
@@ -85,6 +104,18 @@ identical work), ~0.7 = natural chat variety.
 *Where:* `prompts.txt`, `inference_test.py` (`TEMPERATURE`), `bench_engines.py`
 (`temperature: 0.0`, with the reason in a comment).
 
+<details>
+<summary>Going deeper: why temperature 0 matters for benchmarks</summary>
+
+A benchmark is a measurement instrument, and sampling randomness is noise in
+the instrument. At temperature 0.7, two runs of the same prompt take different
+token paths — different lengths, different early-EOS behavior — so tok/s
+jitters for reasons that have nothing to do with the engine. Temperature 0
+fixes the token path, leaving only system noise. That is also why
+`bench_engines.py` sets it explicitly instead of trusting server defaults.
+
+</details>
+
 ## Speed: latency, TTFT, and throughput
 
 **Latency** is "how long until I get X". For chat you care about two of them:
@@ -104,6 +135,10 @@ number for interactive use; TTFT is the headline for perceived snappiness.
 
 *Where:* `bench.py` reports prompt_tps (prefill) and generation_tps (decode)
 separately; `bench_engines.py` measures TTFT over streamed SSE.
+
+> ✋ Try it: run one prompt through `mlx_lm.generate` and watch it stream.
+> The pause before the first word is TTFT (prefill); the typing speed after
+> is decode. You now know which number each sensation maps to.
 
 ## Prefill, decode, and the KV cache
 
@@ -129,6 +164,19 @@ Same cache, one level up the stack.
 and RAG systems reusing long retrieved contexts. Watch peak memory in
 `bench.py` grow as `max_tokens` grows — that delta is mostly KV cache.
 
+<details>
+<summary>Going deeper: the O(n²) → O(n) trade, concretely</summary>
+
+Without a cache, generating token *t* re-attends over all *t−1* previous
+tokens, so a 1000-token reply costs ~1000² attention operations. With the KV
+cache, each step attends over cached entries in one pass — but the cache
+itself costs `layers × 2 (K and V) × tokens × head_dim × bytes` of memory.
+That is why long contexts are a *memory* problem first and a speed problem
+second, and why halving precision (4-bit) only halves the weights, never the
+full story.
+
+</details>
+
 ## Memory-bandwidth bound, warmup, and MTP
 
 LLM decode is **memory-bandwidth bound**: generating one token means reading
@@ -152,7 +200,13 @@ tokens per read = higher tok/s. Rapid-MLX's speed claims partly rest on this;
 that is also why their fixed-protocol `benchmark run` numbers and live
 serving numbers are different things (README step 6).
 
+> ✋ Try it: comment out the warmup line in `bench.py`, run twice, and watch
+> the first prompt's numbers crater. Restore it. You will never again trust a
+> benchmark that doesn't mention warmup.
+
 ## Each pipeline step, in one line
+
+- [ ] I can explain what each step changes and why it exists
 
 | Step | What | Why |
 |---|---|---|
@@ -167,7 +221,8 @@ serving numbers are different things (README step 6).
 ## Hardware factors: what actually limits you
 
 Your benchmark numbers are the product of a whole stack. When a number
-surprises you, the cause is almost always one of these.
+surprises you, the cause is almost always one of these. Read the bold lines
+first; expand a box only when that component is your suspect.
 
 **GPU (the workhorse).** Does the parallel math — the big matrix multiplies
 of prefill and attention. More cores help prefill and training; decode (one
@@ -194,46 +249,45 @@ bigger GPUs but narrower buses. Check your chip's published bandwidth, then
 divide: predicted tok/s ≈ bandwidth ÷ weight-size is usually within 30% of
 measured — a great sanity check on your benchmark.
 
+<details>
+<summary>Going deeper: caches, storage, overhead, OS limits</summary>
+
 **Caches (the hidden accelerators).** Three layers, smallest-first: GPU
 registers/shared memory (per-operation, handled by kernels), system-level
 cache on the SoC (shared by CPU/GPU, why unified memory is efficient), and
 the software KV cache (above). You don't manage the first two; you observe
 them as "why is the second run of the same prompt faster" alongside warmup.
 
-**Storage (the waiting room).** SSD speed only matters at load time (model
-weights streaming into memory) and when memory-mapping huge models. It never
-affects tok/s once running. What matters is *capacity*: keep 2–3× the model
-size free (HF download + bf16 + 4-bit coexist during this lab). NVMe on modern
-Macs loads a 16 GB model in seconds — a non-issue you can verify with
-`time` around step 1 vs step 5.
+**Storage (the waiting room).** SSD speed only matters at load time and when
+memory-mapping huge models — never tok/s once running. What matters is
+*capacity*: keep 2–3× the model size free. NVMe on modern Macs loads a 16 GB
+model in seconds; verify with `time` around step 1 vs step 5.
 
-**Overhead (the tax).** Every layer takes a cut: Python interpreter and
-framework dispatch per token, Metal kernel-launch latency, server HTTP/SSE
-framing, tokenizer encode/decode, and chat-template formatting. Individually
-microseconds; collectively they set the floor for TTFT and cap small-model
-speed (a 1B model won't hit its theoretical tok/s — overhead dominates, not
-bandwidth). In-process `bench.py` vs `bench_engines.py` on the same weights
-shows you the server overhead directly.
+**Overhead (the tax).** Python dispatch per token, Metal kernel-launch
+latency, HTTP/SSE framing, tokenizer encode/decode, chat-template
+formatting. Collectively they floor TTFT and cap small-model speed (a 1B
+model won't hit theoretical tok/s — overhead dominates, not bandwidth).
+In-process `bench.py` vs `bench_engines.py` on the same weights shows you the
+server overhead directly.
 
-**OS factors (macOS specifics).** Unified-memory pressure triggers compression
-and swapping — both cliff-edges: performance falls off a cliff past ~85–90%
-memory pressure, so leave headroom. Background apps (browsers, Electron)
-steal bandwidth, not just capacity — close them for clean numbers. Thermal
-throttling on fanless machines (not your Studio) downclocks sustained runs;
-if late repeats are slower than early ones, suspect heat. Low Power Mode
-caps clocks entirely — never benchmark in it.
+**OS factors (macOS).** Memory pressure past ~85–90% triggers compression and
+swapping — cliff-edges, so leave headroom. Background apps steal bandwidth,
+not just capacity — close them for clean numbers. Thermal throttling
+downclocks sustained runs on fanless machines; if late repeats are slower
+than early ones, suspect heat. Never benchmark in Low Power Mode.
 
-**Other limitations to know.** Context length trades against speed and
-memory (KV cache grows per token — doubling context roughly doubles cache).
-Batch size 1 (this lab) is the worst case for throughput; servers gain by
-batching. Power draw: full-tilt inference on battery drains fast and may
-throttle; benchmark plugged in. And reproducibility: close apps, fix
-temperature at 0 for races, report chip/RAM/runs alongside numbers — a tok/s
-without its conditions is trivia.
+**Other limitations.** Context length trades against speed and memory (KV
+cache grows per token). Batch size 1 (this lab) is worst-case throughput;
+servers gain by batching. Benchmark plugged in. And reproducibility: close
+apps, fix temperature at 0 for races, report chip/RAM/runs with every number
+— a tok/s without its conditions is trivia.
 
-*Try it:* predict your 4-bit decode tok/s from bandwidth ÷ weight size before
-running `bench.py`, then compare. The gap between prediction and measurement
-is the sum of every overhead above — now you know its name.
+</details>
+
+> ✋ Try it (the capstone): predict your 4-bit decode tok/s from bandwidth ÷
+> weight size before running `bench.py`, then compare. The gap between
+> prediction and measurement is the sum of every overhead above — now you
+> know its name.
 
 ## Further reading (in order)
 

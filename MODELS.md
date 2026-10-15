@@ -3,102 +3,150 @@
 Every ID below was verified against the Hugging Face API. Sizes are bf16
 download size; 4-bit MLX is roughly a quarter of that.
 
-## 1. Catalog — source weights by vendor
+## Quick pick — "I want…"
 
-| Vendor | Model | HF ID | bf16 size | Notes |
-|---|---|---|---|---|
-| Alibaba (Qwen) | Qwen3-8B (default) | `Qwen/Qwen3-8B` | ~16 GB | Small enough to learn the full loop in one sitting |
-| Alibaba (Qwen) | Qwen3-32B | `Qwen/Qwen3-32B` | ~64 GB | Best quality that still fits 64 GB at 4-bit |
-| Alibaba (Qwen) | Qwen3-30B-A3B (MoE) | `Qwen/Qwen3-30B-A3B` | ~60 GB | Only ~3B params active per token — fast |
-| Alibaba (Qwen) | Qwen3.5-9B | `Qwen/Qwen3.5-9B` | ~18 GB | 2026 generation, 262K context |
-| Alibaba (Qwen) | Qwen3.6-35B-A3B (MoE) | `Qwen/Qwen3.6-35B-A3B` | ~70 GB | Sweet spot for this machine; convert needs ~70 GB free |
-| Alibaba (Qwen) | Qwen3.6-27B | `Qwen/Qwen3.6-27B` | ~54 GB | Dense 3.6; simpler alternative to the MoE |
-| Alibaba (Qwen) | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | ~54 GB | Newest dense Qwen in the explorer; compare vs 3.6-27B |
-| Alibaba (Qwen) | Qwen3.5-9B | `Qwen/Qwen3.5-9B` | ~18 GB | 2026 generation, 262K context |
-| Alibaba (Qwen) | Qwen3.5-4B / 2B | `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-2B` | ~8 / ~4 GB | Small and fast; 2B runs anywhere |
-| Alibaba (Qwen) | Qwen3.5-27B | `Qwen/Qwen3.5-27B` | ~54 GB | Mid-size 3.5 for quality runs |
-| Alibaba (Qwen) | Qwen3.5-35B-A3B (MoE) | `Qwen/Qwen3.5-35B-A3B` | ~70 GB | MoE alternative to 3.6-35B — benchmark them against each other |
-| Alibaba (Qwen) | Qwen3-Coder-30B-A3B | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | ~60 GB | Best open coding weights; serve to OpenClaw/agents |
-| Alibaba (Qwen) | Qwen2.5-Coder 32B / 14B / 7B | `Qwen/Qwen2.5-Coder-32B-Instruct`, `-14B-…`, `-7B-…` | ~64 / ~28 / ~14 GB | Previous-gen coders; 7B is the quick learner loop |
-| Google | Gemma 3 27B IT | `google/gemma-3-27b-it` | ~54 GB | Gated — accept license + login; strong all-rounder |
-| Google | Gemma 4 26B-A4B IT (MoE) | `google/gemma-4-26B-A4B-it` | ~52 GB | 2026 gen; only ~4B params active — fast; login if asked |
-| Google | Gemma 4 31B IT | `google/gemma-4-31B-it` | ~62 GB | 2026 gen dense; best quality-per-GB in its class; login if asked |
-| Meta | Llama 3.3 70B Instruct | `meta-llama/Llama-3.3-70B-Instruct` | ~140 GB | Gated; fits 64 GB only at 4-bit (~40 GB), tight |
-| Meta | Muse Glimmer 30B | `meta-models/Muse-Glimmer-30B` | ~60 GB | Apache 2.0; distilled from Muse Spark for local agents; 4-bit ≈ 18–20 GB |
-| Meta | Muse Spark 1.x | — | — | **Not downloadable** — closed weights, API-only (`api.meta.ai/v1`); use Glimmer above for local runs |
-| DeepSeek | R1-Distill-Qwen-32B | `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` | ~64 GB | Reasoning traces; weak at tool calling — benchmark, don't agent |
-| OpenAI | gpt-oss-20b | `openai/gpt-oss-20b` | ~40 GB | Apache 2.0, built for agents/tool use |
-| Alibaba (older) | Qwen2.5-32B Instruct | `Qwen/Qwen2.5-32B-Instruct` | ~64 GB | Battle-tested baseline to compare newer models against |
+| You want… | Download this | Then… |
+|---|---|---|
+| The default learner loop | `Qwen/Qwen3-8B` | README steps 1–7 |
+| Best quality on 64 GB | `Qwen/Qwen3-32B` | README steps 1–7 |
+| Fastest big model (MoE) | `Qwen/Qwen3-30B-A3B` | README steps 1–7 |
+| 2026 generation, small | `Qwen/Qwen3.5-4B` | README steps 1–7 |
+| The 35B MoE showdown | `Qwen/Qwen3.5-35B-A3B` vs `Qwen/Qwen3.6-35B-A3B` | Worked example below |
+| Coding with agents | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | Serve it, point OpenClaw at it |
+| Skip converting entirely | Any [pre-quantized port](#2-shortcut--pre-quantized-mlx-ports-skip-steps-23) | Jump to README step 4 |
 
-`HF_TOKEN` is required for these labs. How to generate one:
+## 1. Token setup (do once) ☑️
+
+- [ ] HF account created
+- [ ] Read token generated and saved
+- [ ] Logged in via CLI or exported `HF_TOKEN`
+- [ ] Gated-model licenses accepted (only for Llama, Gemma, Qwen-Coder)
+
+`HF_TOKEN` is required for these labs — even public downloads send it (avoids
+anonymous rate limits), and gated models refuse without it. Generate one:
 
 1. Sign up / log in at [huggingface.co](https://huggingface.co/join).
 2. Open [Settings → Access Tokens](https://huggingface.co/settings/tokens).
-3. Click **Create new token**, give it a name (e.g. `mlx-lab`), type **Read**,
-   and create. (Fine-grained tokens work too — it only needs read access to
-   public and gated repos you've been granted.)
-4. Copy the token (it starts with `hf_`) — it is shown once.
-5. For gated models (Llama, Gemma, Qwen-Coder), also open the model's HF
-   page and click through its license agreement; access is usually granted
-   instantly, and the download fails until then.
+3. **Create new token**, name it (e.g. `mlx-lab`), type **Read**, create.
+4. Copy the `hf_…` value — shown once.
+5. For gated models, open the model's HF page and accept its license.
 
-Export it before any download — the CLI sends it even for public models,
-which avoids anonymous rate limits, and gated models refuse without it:
+Then either export it per session or log in persistently:
 
 ```bash
 export HF_TOKEN="hf_..."
 uv run huggingface-cli download <HF_ID> --local-dir "models/<name>-hf"
+# or persist login instead of exporting each time:
+uv run huggingface-cli login                 # interactive paste
+uv run huggingface-cli login --token "$HF_TOKEN"   # non-interactive
 ```
 
-Or log in from the CLI instead of exporting the variable each time —
-either form persists the token for subsequent commands:
+## 2. Catalog — source weights by family
 
-```bash
-uv run huggingface-cli login                 # interactive: paste token when asked
-uv run huggingface-cli login --token "$HF_TOKEN"   # non-interactive equivalent
-```
+<details open>
+<summary><strong>Alibaba Qwen — dense chat models</strong> (click to collapse)</summary>
 
-## 2. Shortcut — pre-quantized MLX ports (skip steps 2–3)
+| Model | HF ID | bf16 | Notes |
+|---|---|---|---|
+| Qwen3-8B (default) | `Qwen/Qwen3-8B` | ~16 GB | Learn the full loop in one sitting |
+| Qwen3-32B | `Qwen/Qwen3-32B` | ~64 GB | Best quality that fits 64 GB at 4-bit |
+| Qwen3.5-2B / 4B | `Qwen/Qwen3.5-2B`, `Qwen/Qwen3.5-4B` | ~4 / ~8 GB | Small, fast 2026 gen; 2B runs anywhere |
+| Qwen3.5-9B | `Qwen/Qwen3.5-9B` | ~18 GB | 2026 gen, 262K context |
+| Qwen3.5-27B | `Qwen/Qwen3.5-27B` | ~54 GB | Mid-size 3.5 for quality runs |
+| Qwen3.6-27B | `Qwen/Qwen3.6-27B` | ~54 GB | Dense 3.6; simpler alternative to the MoE |
+| Qwen3.8-27B | `Qwen/Qwen3.8-27B` | ~54 GB | Newest dense Qwen in the explorer — compare vs 3.6-27B |
+| Qwen2.5-32B | `Qwen/Qwen2.5-32B-Instruct` | ~64 GB | Battle-tested baseline for newer models |
 
-The community publishes ready-made 4-bit MLX builds. Download one and jump
-straight to step 4 (inference test). You learn less, but you get a second
-data point: compare *their* quant against *yours*.
+</details>
+
+<details>
+<summary><strong>Alibaba Qwen — MoE models (fast for their size)</strong></summary>
+
+| Model | HF ID | bf16 | Notes |
+|---|---|---|---|
+| Qwen3-30B-A3B | `Qwen/Qwen3-30B-A3B` | ~60 GB | Only ~3B params active per token |
+| Qwen3.5-35B-A3B | `Qwen/Qwen3.5-35B-A3B` | ~70 GB | MoE rival to 3.6-35B — benchmark them against each other |
+| Qwen3.6-35B-A3B | `Qwen/Qwen3.6-35B-A3B` | ~70 GB | Sweet spot for this machine |
+
+An MoE (mixture-of-experts) holds many parameters but routes each token
+through a few of them — big-model quality near small-model speed. That is why
+a "35B" MoE can outrun a 27B dense model.
+
+</details>
+
+<details>
+<summary><strong>Alibaba Qwen — coders</strong></summary>
+
+| Model | HF ID | bf16 | Notes |
+|---|---|---|---|
+| Qwen3-Coder-30B-A3B | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | ~60 GB | Best open coding weights; serve to OpenClaw/agents |
+| Qwen2.5-Coder-32B | `Qwen/Qwen2.5-Coder-32B-Instruct` | ~64 GB | Previous gen, still strong |
+| Qwen2.5-Coder-14B | `Qwen/Qwen2.5-Coder-14B-Instruct` | ~28 GB | Mid-size coder |
+| Qwen2.5-Coder-7B | `Qwen/Qwen2.5-Coder-7B-Instruct` | ~14 GB | The quick learner loop for code |
+
+</details>
+
+<details>
+<summary><strong>Google, Meta, DeepSeek, OpenAI</strong></summary>
+
+| Model | HF ID | bf16 | Notes |
+|---|---|---|---|
+| Gemma 3 27B IT | `google/gemma-3-27b-it` | ~54 GB | Gated — accept license + login |
+| Gemma 4 26B-A4B IT (MoE) | `google/gemma-4-26B-A4B-it` | ~52 GB | 2026 gen; ~4B active — fast; login if asked |
+| Gemma 4 31B IT | `google/gemma-4-31B-it` | ~62 GB | 2026 gen dense; login if asked |
+| Llama 3.3 70B | `meta-llama/Llama-3.3-70B-Instruct` | ~140 GB | Gated; fits 64 GB only at 4-bit (~40 GB), tight |
+| Muse Glimmer 30B | `meta-models/Muse-Glimmer-30B` | ~60 GB | Apache 2.0, distilled from Muse Spark for local agents |
+| Muse Spark 1.x | — | — | **Not downloadable** — closed weights, API-only; use Glimmer locally |
+| R1-Distill-Qwen-32B | `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` | ~64 GB | Reasoning traces; weak at tool calling — benchmark, don't agent |
+| gpt-oss-20b | `openai/gpt-oss-20b` | ~40 GB | Apache 2.0, built for agents/tool use |
+
+</details>
+
+## 3. Shortcut — pre-quantized MLX ports (skip steps 2–3)
+
+Download a ready-made 4-bit build and jump to README step 4. You learn less,
+but you gain a second data point: *their* quant vs *yours*.
+
+- [ ] Port downloaded to `models/<name>-mlx-4bit`
+- [ ] Benched with `bench.py --model …` and compared against your own quant
 
 | Port | HF ID |
 |---|---|
 | Qwen3-32B 4-bit | `mlx-community/Qwen3-32B-4bit` |
-| Qwen3.5-9B 4-bit | `mlx-community/Qwen3.5-9B-MLX-4bit` |
-| Qwen3.8-27B 4-bit | `mlx-community/Qwen3.8-27B-4bit` |
-| Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
-| Llama-3.3-70B 4-bit | `mlx-community/Llama-3.3-70B-Instruct-4bit` |
-| Muse-Glimmer-30B 4-bit | `mlx-community/Muse-Glimmer-30B-4bit` |
-| Qwen3.8-27B 4-bit | `mlx-community/Qwen3.8-27B-4bit` (or `lmstudio-community/Qwen3.8-27B-MLX-4bit`) |
-| Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
-| Qwen3.5-9B 4-bit | `mlx-community/Qwen3.5-9B-MLX-4bit` (or lmstudio-community build) |
 | Qwen3.5-4B 4-bit | `mlx-community/Qwen3.5-4B-MLX-4bit` |
+| Qwen3.5-9B 4-bit | `mlx-community/Qwen3.5-9B-MLX-4bit` |
+| Qwen3.5-35B-A3B 4-bit | `mlx-community/Qwen3.5-35B-A3B-4bit` |
+| Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
+| Qwen3.8-27B 4-bit | `mlx-community/Qwen3.8-27B-4bit` |
 | Qwen3-Coder-30B 4-bit | `lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit` |
 | Qwen2.5-Coder-32B 4-bit | `lmstudio-community/Qwen2.5-Coder-32B-Instruct-MLX-4bit` |
+| Llama-3.3-70B 4-bit | `mlx-community/Llama-3.3-70B-Instruct-4bit` |
+| Muse-Glimmer-30B 4-bit | `mlx-community/Muse-Glimmer-30B-4bit` |
 
 ```bash
 uv run huggingface-cli download <PORT_ID> --local-dir "models/<name>-mlx-4bit"
 uv run python bench.py --model "models/<name>-mlx-4bit"
 ```
 
-## 3. Where model locations are defined
+`mlx-community` and `lmstudio-community` are the two publishers the
+[MLX model explorer](https://huggingface.co/spaces/mlx-community/mlx-model-explorer)
+indexes — when both offer a port, try both and keep the faster.
+
+## 4. Where model locations are defined
 
 Everything is an env var or a flag — no hardcoded paths:
 
 | Knob | Default | Used by |
 |---|---|---|
-| `MODEL_ID` | `Qwen/Qwen3-8B` | `run_all.sh` (download/convert/quantize dirs derive from it) |
+| `MODEL_ID` | `Qwen/Qwen3-8B` | `run_all.sh` (all three dirs derive from it) |
 | `models/<short>-hf` | from `MODEL_ID` | HF download target (step 1) |
-| `models/<short>-mlx-bf16` | from `MODEL_ID` | convert output (step 2), quantize input (step 3) |
+| `models/<short>-mlx-bf16` | from `MODEL_ID` | convert output (step 2) → quantize input (step 3) |
 | `models/<short>-mlx-4bit` | from `MODEL_ID` | quantize output (step 3); default bench target |
 | `bench.py --model` | bf16 + 4-bit pair | Bench one dir instead of the pair |
 | `bench_engines.py --base-url --model --tag` | (required) | Which server and served-model name to race |
 | Rapid-MLX alias | `qwen3.5-9b-4bit` | README step 6 (`rapid-mlx serve <alias>`) |
 
-Examples:
+Try it:
 
 ```bash
 MODEL_ID=Qwen/Qwen3-30B-A3B ./run_all.sh   # whole pipeline on a bigger MoE
@@ -107,9 +155,9 @@ uv run python bench.py --model models/Qwen3-30B-A3B-mlx-4bit
 
 ## Worked example — Qwen3.5-35B-A3B end to end
 
-A 35B MoE at 4-bit is ~20 GB in memory and the closest 2026 rival to the
-3.6-35B default pick. Full convert path (you need ~160 GB free while all
-three copies coexist — check with `df -h` first):
+- [ ] ~160 GB free (`df -h`) — all three copies coexist mid-pipeline
+- [ ] Full run finished and `REPORT.md` read
+- [ ] Served, raced, and compared against the community port
 
 ```bash
 export HF_TOKEN="hf_..."
@@ -127,8 +175,7 @@ uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
   --model Qwen3.5-35B-A3B-mlx-4bit --tag mlx-lm
 ```
 
-Skip-the-queue alternative — download the community 4-bit build (~20 GB) and
-start at step 4, or A/B it against your own quant to see whose is better:
+Or A/B your quant against the community's (~20 GB, straight to step 4):
 
 ```bash
 uv run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit \
@@ -136,15 +183,21 @@ uv run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit \
 uv run python bench.py --model models/Qwen3.5-35B-A3B-mlx-4bit-community
 ```
 
-## 4. Runner options — four ways to serve a model
+## 5. Runner options — four ways to serve a model
 
-**A. mlx-lm (this lab's path).** Convert HF → MLX yourself, serve with
-`mlx_lm.server`, benchmark in-process. Maximum learning, Apple-native speed.
-See README steps 1–5.
+<details open>
+<summary><strong>A. mlx-lm (this lab's path) — maximum learning</strong></summary>
 
-**B. Ollama (easiest).** One tool for download + serve + API. Recent Ollama
-routes supported models through an MLX backend on Apple Silicon; weights are
-GGUF, not MLX-native. Best when you want results, not lessons:
+Convert HF → MLX yourself, serve with `mlx_lm.server`, benchmark in-process.
+Apple-native speed. README steps 1–5.
+
+</details>
+
+<details>
+<summary><strong>B. Ollama (easiest) — results, not lessons</strong></summary>
+
+One tool for download + serve + API. Recent Ollama routes supported models
+through an MLX backend on Apple Silicon; weights are GGUF, not MLX-native.
 
 ```bash
 brew install ollama
@@ -152,14 +205,17 @@ ollama pull gpt-oss:20b     # library names: qwen3, qwen3.5, llama3.3, gemma3, d
 ollama run gpt-oss:20b
 ```
 
-Ollama also exposes OpenAI-compatible endpoints, so `bench_engines.py` can
-race it: serve with `ollama serve`, then point `--base-url` at
-`http://localhost:11434/v1`. Compare its numbers against your MLX-native run
-of the same-class model.
+Race it: `ollama serve`, then
+`bench_engines.py --base-url http://localhost:11434/v1` — compare against
+your MLX-native run of the same-class model.
 
-**C. llama.cpp (maximum control).** The engine under Ollama's hood, without
-the wrapper. GGUF weights + explicit flags for every knob (threads, batch,
-cache, quant):
+</details>
+
+<details>
+<summary><strong>C. llama.cpp (maximum control) — isolate the layer</strong></summary>
+
+The engine under Ollama's hood, without the wrapper. GGUF weights + explicit
+flags for threads, batch, cache, quant:
 
 ```bash
 brew install llama.cpp
@@ -169,19 +225,26 @@ llama-server -m models/gguf/*.gguf -c 8192 --port 8001
 ```
 
 Then `bench_engines.py --base-url http://127.0.0.1:8001/v1 --tag llama-cpp`.
-Use this when a number looks wrong and you want to isolate which layer (app,
+Use this when a number looks wrong and you want to know which layer (app,
 server, engine) owns it.
 
-**D. Rapid-MLX (the claim to test).** MLX-native server, OpenAI-compatible,
-claims up to 4× Apple's mlx-lm on the same weights:
+</details>
+
+<details>
+<summary><strong>D. Rapid-MLX (the claim to test)</strong></summary>
+
+MLX-native server, OpenAI-compatible, claims up to 4× Apple's mlx-lm on the
+same weights:
 
 ```bash
 brew install rapid-mlx
-rapid-mlx serve qwen3.5-9b-4bit        # localhost:8000, OpenAI-compatible
-rapid-mlx benchmark run qwen3.5-9b-4bit  # their fixed protocol (not comparable to serving)
+rapid-mlx serve qwen3.5-9b-4bit          # localhost:8000, OpenAI-compatible
+rapid-mlx benchmark run qwen3.5-9b-4bit  # fixed protocol — NOT comparable to serving
 ```
 
 Race it with `bench_engines.py --tag rapid-mlx` per README step 6.
+
+</details>
 
 Rule of thumb: learn with A, daily-drive with B, debug with C, verify hype
 with D.

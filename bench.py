@@ -1,10 +1,18 @@
-"""Benchmark an MLX model in-process: TTFT, prefill tok/s, decode tok/s, peak memory.
+"""Step 5 of the lab: benchmark an MLX model in-process.
+
+WHAT THIS IS FOR: measures the three numbers that describe inference speed —
+  TTFT is approximated here by prefill rate; prompt_tps = prefill (prompt
+  processing) tok/s; generation_tps = decode tok/s, the headline number for
+  chat. Also records peak unified-memory per run (weights + KV cache).
+WHY WARMUP: the first run compiles Metal kernels, so it is discarded — without
+  this you benchmark the compiler, not the model (see CONCEPTS.md).
+INPUTS:  prompts.txt (one prompt per line), one or two converted model dirs.
+OUTPUTS: results/bench_<model-dir-name>.json (one file per build benched).
 
 Usage:
     uv run python bench.py [--model models/Qwen3-8B-mlx-4bit] [--repeats 3]
 
-Runs every prompt in prompts.txt against the bf16 AND 4-bit builds (when both
-exist), after one discarded warmup run. Writes results/bench_<name>.json.
+Default (no --model): benches the bf16 AND 4-bit pair so you can compare them.
 """
 
 from __future__ import annotations
@@ -44,7 +52,8 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
             except Exception:
                 full = prompt
 
-        # Warmup (discarded): pays kernel-compile + cache costs.
+        # Warmup (discarded): first run compiles Metal kernels, so it would
+        # poison the measurement. Short max_tokens keeps it cheap.
         generate(model, tokenizer, prompt=full, max_tokens=32, verbose=False)
 
         for _ in range(repeats):
@@ -53,6 +62,8 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
                 model, tokenizer, prompt=full, max_tokens=256, verbose=False
             )
             dt = time.perf_counter() - t0
+            # getattr fallbacks: field names differ across mlx-lm versions;
+            # a missing metric is recorded as null, never faked.
             out["runs"].append(
                 {
                     "prompt": prompt[:80],
