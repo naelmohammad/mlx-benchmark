@@ -17,20 +17,38 @@ SHORT="$(basename "$MODEL_ID")"
 HF_DIR="models/${SHORT}-hf"
 BF16_DIR="models/${SHORT}-mlx-bf16"
 Q4_DIR="models/${SHORT}-mlx-4bit"
+# Idempotent re-runs: stages whose outputs already exist are skipped.
+# FORCE=1 ./run_all.sh redoes everything from scratch.
+FORCE="${FORCE:-0}"
+
+have_weights() { compgen -G "$1/*.safetensors" >/dev/null || compgen -G "$1/*.bin" >/dev/null; }
+have_mlx() { [ -f "$1/config.json" ]; }
 
 echo "==> [0/6] environment"
 uv venv --python 3.12 2>/dev/null || true
 uv sync
 
 echo "==> [1/6] download $MODEL_ID"
-uv run hf download "$MODEL_ID" --local-dir "$HF_DIR"
+if [ "$FORCE" = 1 ] || ! have_weights "$HF_DIR"; then
+  uv run hf download "$MODEL_ID" --local-dir "$HF_DIR"
+else
+  echo "    exists: $HF_DIR (skipped; FORCE=1 to re-download)"
+fi
 
 echo "==> [2/6] convert to MLX (bf16)"
-uv run mlx_lm.convert --hf-path "$HF_DIR" --mlx-path "$BF16_DIR"
+if [ "$FORCE" = 1 ] || ! have_mlx "$BF16_DIR"; then
+  uv run mlx_lm.convert --hf-path "$HF_DIR" --mlx-path "$BF16_DIR"
+else
+  echo "    exists: $BF16_DIR (skipped; FORCE=1 to re-convert)"
+fi
 du -sh "$HF_DIR" "$BF16_DIR"
 
 echo "==> [3/6] quantize to 4-bit"
-uv run mlx_lm.convert --hf-path "$BF16_DIR" --mlx-path "$Q4_DIR" -q --q-bits 4
+if [ "$FORCE" = 1 ] || ! have_mlx "$Q4_DIR"; then
+  uv run mlx_lm.convert --hf-path "$BF16_DIR" --mlx-path "$Q4_DIR" -q --q-bits 4
+else
+  echo "    exists: $Q4_DIR (skipped; FORCE=1 to re-quantize)"
+fi
 du -sh "$Q4_DIR"
 
 echo "==> [4/6] inference test (bf16 vs 4-bit transcripts)"
