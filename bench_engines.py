@@ -40,6 +40,7 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
     )
     t0 = time.perf_counter()
     first_token_at = None
+    ttft_to = None
     chars = 0
     completion_tokens = None
     # SSE stream: each "data:" line is one JSON chunk; "[DONE]" ends it.
@@ -57,10 +58,16 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
             except json.JSONDecodeError:
                 continue
             choice = (chunk.get("choices") or [{}])[0]
-            delta = (choice.get("delta") or {}).get("content") or ""
-            if delta and first_token_at is None:
+            delta = choice.get("delta") or {}
+            # Thinking models (Ollama) stream `reasoning` deltas with empty
+            # content first: TTFT marks the first output of either kind, and
+            # ttft_to records which, so cross-engine numbers stay honest.
+            text = delta.get("content") or ""
+            think = delta.get("reasoning") or ""
+            if (text or think) and first_token_at is None:
                 first_token_at = time.perf_counter()
-            chars += len(delta)
+                ttft_to = "content" if text else "reasoning"
+            chars += len(text)
             # Some servers omit `usage` on streams (requested via
             # stream_options.include_usage above); then we fall back to chars/sec.
             usage = chunk.get("usage") or {}
@@ -71,6 +78,7 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
     decode_s = (total - ttft) if ttft else total
     return {
         "ttft_seconds": round(ttft, 3) if ttft is not None else None,
+        "ttft_to": ttft_to,
         "total_seconds": round(total, 3),
         "output_chars": chars,
         "chars_per_sec": round(chars / decode_s, 1) if decode_s > 0 else None,
@@ -95,12 +103,23 @@ def main() -> None:
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     runs = []
-    for prompt in prompts:
-        stream_once(args.base_url, args.model, prompt)  # warmup, discarded
-        for _ in range(args.repeats):
-            r = stream_once(args.base_url, args.model, prompt)
-            r["prompt"] = prompt[:80]
-            runs.append(r)
+    # A refused connection means the server isn't up — say so plainly instead
+    # of dumping a urllib traceback (README step 6 needs the server in
+    # another terminal first).
+    try:
+        for prompt in prompts:
+            stream_once(args.base_url, args.model, prompt)  # warmup, discarded
+            for _ in range(args.repeats):
+                r = stream_once(args.base_url, args.model, prompt)
+                r["prompt"] = prompt[:80]
+                runs.append(r)
+    except urllib.error.URLError as e:
+        raise SystemExit(
+            f"Cannot reach a server at {args.base_url} ({e.reason}).\n"
+            f"Start it first, e.g. terminal 1:\n"
+            f"  uv run mlx_lm.server --model models/<your>-mlx-4bit --port 8000\n"
+            f"then re-run this command."
+        )
     out = {"engine_tag": args.tag, "base_url": args.base_url,
            "model": args.model, "repeats": args.repeats, "runs": runs}
     path = results_dir / f"engines_{args.tag}.json"
