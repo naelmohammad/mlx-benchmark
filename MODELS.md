@@ -183,6 +183,44 @@ uv run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit \
 uv run python bench.py --model models/Qwen3.5-35B-A3B-mlx-4bit-community
 ```
 
+## Worked example — Gemma 4 (26B-A4B MoE and 31B dense)
+
+Gemma 4 is Google's 2026 family and `mlx-lm` supports it natively (`gemma4`
+architecture). The MoE is the interesting one: 26B total parameters with only
+~4B active per token — near-27B quality at small-model speed and ~15 GB in
+memory at 4-bit.
+
+- [ ] License accepted on the model's HF page if the download asks (Google
+      models sometimes gate files even when metadata is public)
+- [ ] Full run finished and `REPORT.md` read
+
+```bash
+export HF_TOKEN="hf_..."
+export MODEL_ID=google/gemma-4-26B-A4B-it
+./run_all.sh   # download (~52 GB) -> bf16 -> 4-bit -> infer -> bench -> REPORT.md
+```
+
+Same commands, dense alternative (~62 GB download, ~18 GB at 4-bit):
+
+```bash
+export MODEL_ID=google/gemma-4-31B-it
+./run_all.sh
+```
+
+Serve your build and race it (same pattern as every model — only names change):
+
+```bash
+# terminal 1
+uv run mlx_lm.server --model models/gemma-4-26B-A4B-it-mlx-4bit --port 8000
+# terminal 2
+uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
+  --model gemma-4-26B-A4B-it-mlx-4bit --tag mlx-lm
+```
+
+Suggested A/B once both are built: Gemma 4 26B-A4B vs Qwen3.5-35B-A3B —
+2026 MoE vs 2026 MoE, same prompts, `bench.py --model` on each 4-bit dir,
+then `make_report.py`. That table is the one worth committing.
+
 ## 5. Runner options — four ways to serve a model
 
 <details open>
