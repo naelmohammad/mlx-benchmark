@@ -42,6 +42,10 @@ uv run huggingface-cli download "$MODEL_ID" --local-dir "models/$(basename $MODE
 # default MODEL_ID=Qwen/Qwen3-8B; override per-command, e.g. MODEL_ID=Qwen/Qwen3-30B-A3B
 ```
 
+Full model catalog (Qwen, Gemma, Llama, DeepSeek, gpt-oss, pre-quantized MLX
+ports), gated-model login, where every model path is configured, and the
+Ollama / llama.cpp / Rapid-MLX alternatives: see [MODELS.md](MODELS.md).
+
 What you learn: repos are just versioned folders of safetensors + tokenizer
 + config. Check size with `du -sh models/*`.
 
