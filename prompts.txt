@@ -1,0 +1,7 @@
+# Prompts used by every benchmark and inference test.
+# One per line. Lines starting with # are ignored.
+Explain attention in transformers in three sentences.
+Write a haiku about GPU memory.
+A REST API returns 500 errors only on Tuesdays. List the three most likely causes.
+Write a Python function that retries a flaky HTTP call with exponential backoff.
+Summarize the tradeoff between quantization and model quality in two sentences.

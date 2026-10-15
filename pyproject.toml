@@ -1,0 +1,13 @@
+[project]
+name = "mlx-benchmark"
+version = "0.1.0"
+description = "Learn the full local-LLM loop on Apple Silicon: download, convert, quantize, benchmark, report."
+requires-python = ">=3.12"
+dependencies = [
+    "mlx-lm>=0.22",
+    "huggingface_hub>=0.27",
+    "psutil>=6",
+]
+
+[tool.uv]
+package = false
