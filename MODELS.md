@@ -156,13 +156,13 @@ uv run python bench.py --model models/Qwen3-30B-A3B-mlx-4bit
 ## Worked example — Qwen3.5-35B-A3B end to end
 
 - [ ] ~160 GB free (`df -h`) — all three copies coexist mid-pipeline
-- [ ] Full run finished and `REPORT.md` read
+- [ ] Full run finished and `reports/REPORT.md` read
 - [ ] Served, raced, and compared against the community port
 
 ```bash
 export HF_TOKEN="hf_..."
 export MODEL_ID=Qwen/Qwen3.5-35B-A3B
-./run_all.sh   # download (~70 GB) -> bf16 -> 4-bit -> infer -> bench -> REPORT.md
+./run_all.sh   # download (~70 GB) -> bf16 -> 4-bit -> infer -> bench -> reports/REPORT.md
 ```
 
 Serve your build and race it:
@@ -192,12 +192,12 @@ memory at 4-bit.
 
 - [ ] License accepted on the model's HF page if the download asks (Google
       models sometimes gate files even when metadata is public)
-- [ ] Full run finished and `REPORT.md` read
+- [ ] Full run finished and `reports/REPORT.md` read
 
 ```bash
 export HF_TOKEN="hf_..."
 export MODEL_ID=google/gemma-4-26B-A4B-it
-./run_all.sh   # download (~52 GB) -> bf16 -> 4-bit -> infer -> bench -> REPORT.md
+./run_all.sh   # download (~52 GB) -> bf16 -> 4-bit -> infer -> bench -> reports/REPORT.md
 ```
 
 Same commands, dense alternative (~62 GB download, ~18 GB at 4-bit):

@@ -218,7 +218,7 @@ is *not* comparable to live-serving numbers, including ours.
 
 ```bash
 uv run python make_report.py
-# writes REPORT.md + .html + .pdf + .xlsx + .json + .csv
+# writes reports/REPORT.md + .html + .pdf + .xlsx + .json + .csv
 # single format: uv run python make_report.py --format pdf
 ```
 
@@ -236,7 +236,7 @@ and flat CSV.
 ## Results
 
 Results are yours and gitignored (`results/*.json`, `models/`). Commit
-`REPORT.*` only when you want to publish a run.
+`reports/*` only when you want to publish a run.
 
 ## Scripts (what each file is for)
 

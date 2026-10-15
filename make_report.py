@@ -5,11 +5,11 @@ WHAT THIS IS FOR: turns raw JSON into readable reports — machine specs
   sizes, the bf16-vs-4-bit table, and the engine-race table with its
   methodology footnote. Missing stages degrade gracefully ("not run yet").
 INPUTS:  results/bench_*.json, results/inference_*.json, results/engines_*.json.
-OUTPUTS: REPORT.md, REPORT.html, REPORT.pdf, REPORT.xlsx, REPORT.json,
-  REPORT.csv (pick with --format; default writes all six).
+OUTPUTS: reports/REPORT.md, .html, .pdf, .xlsx, .json, .csv
+  (pick with --format; default writes all six).
 
 Usage:
-    uv run python make_report.py [--out REPORT] [--format all]
+    uv run python make_report.py [--out reports/REPORT] [--format all]
 """
 
 from __future__ import annotations
@@ -354,8 +354,8 @@ def render_pdf(r: dict, path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="REPORT",
-                    help="Report base name (extensions added per format).")
+    ap.add_argument("--out", default="reports/REPORT",
+                    help="Report base path (extensions added per format).")
     ap.add_argument("--format", default="all", choices=("all",) + FORMATS,
                     help="Which report to write (default: all six).")
     args = ap.parse_args()
@@ -364,6 +364,7 @@ def main() -> None:
     wanted = FORMATS if args.format == "all" else (args.format,)
     report = collect()
     base = ROOT / args.out
+    base.parent.mkdir(parents=True, exist_ok=True)
     for fmt in wanted:
         if fmt == "md":
             (base.with_suffix(".md")).write_text(render_md(report))
@@ -381,7 +382,7 @@ def main() -> None:
     complete("Report",
              [f"{len(wanted)} format(s): "
               f"{', '.join(str(base.with_suffix('.' + f)) for f in wanted)}"],
-             started, next_step="open REPORT.html, or commit REPORT.*")
+             started, next_step="open reports/REPORT.html, or commit reports/*")
 
 
 if __name__ == "__main__":

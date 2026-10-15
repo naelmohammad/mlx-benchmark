@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_all.sh — the whole mlx-lm pipeline in one command (README steps 1-5 + 7).
 # WHAT IT DOES: download (HF) -> convert (bf16 MLX) -> quantize (4-bit) ->
-#   inference transcripts -> benchmark -> REPORT.md. Override the model with
+#   inference transcripts -> benchmark -> reports/REPORT.md. Override the model with
 #   MODEL_ID=<hf-id> ./run_all.sh. The engine race (step 6) stays interactive
 #   because it needs servers in separate terminals — see README step 6.
 set -euo pipefail
@@ -41,4 +41,4 @@ uv run python bench.py
 
 echo "==> [6/6] report"
 uv run python make_report.py
-echo "Done. Read REPORT.md, then race Rapid-MLX per README step 6."
+echo "Done. Read reports/REPORT.md, then race Rapid-MLX per README step 6."
