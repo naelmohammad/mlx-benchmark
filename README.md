@@ -153,9 +153,10 @@ overhead, and now you know its name.
 
 </details>
 
-### 6. Race mlx-lm vs Rapid-MLX 🏁
+### 6. Race engines 🏁 (mlx-lm vs Rapid-MLX vs Ollama)
 
 - [ ] `results/engines_mlx-lm.json` and `results/engines_rapid-mlx.json` written
+- [ ] `results/engines_ollama-*.json` written (if you have Ollama models)
 
 Terminal 1 — serve your 4-bit build with Apple's server:
 
@@ -185,6 +186,19 @@ rapid-mlx serve qwen3.5-9b-4bit
 uv run python bench_engines.py --base-url http://localhost:8001/v1 \
   --model "qwen3.5-9b-4bit" --tag rapid-mlx
 ```
+
+Terminal 4 — race your already-downloaded Ollama models (no setup beyond
+`ollama serve`, which the desktop app also provides):
+
+```bash
+uv run python bench_ollama.py --repeats 1   # races everything in `ollama list`
+# subset: uv run python bench_ollama.py --models qwen3.6:27b-mlx,gemma4:12b-mlx
+```
+
+Discovers models via Ollama's API (runner, size, quant recorded per model),
+skips non-chat models (embed/decision-only) instead of failing, and writes one
+`results/engines_ollama-<model>.json` per model — picked up automatically by
+step 7's race table.
 
 <details>
 <summary>How to read the result (methodology)</summary>
@@ -224,7 +238,41 @@ and flat CSV.
 Results are yours and gitignored (`results/*.json`, `models/`). Commit
 `REPORT.*` only when you want to publish a run.
 
+## Scripts (what each file is for)
+
+| File | Step | Does |
+|---|---|---|
+| `run_all.sh` | 1–5, 7 | Whole mlx-lm pipeline; `MODEL_ID=<id>` overrides the model |
+| `bench.py` | 5 | In-process TTFT/prefill/decode/memory; defaults to all local builds |
+| `inference_test.py` | 4 | Quality gate transcripts, bf16 vs 4-bit |
+| `bench_engines.py` | 6 | Server-vs-server race over OpenAI SSE; shared by Ollama racer |
+| `bench_ollama.py` | 6 | Races everything in `ollama list`; skips non-chat models |
+| `make_report.py` | 7 | Merges JSON into md/html/pdf/xlsx/json/csv (`--format`) |
+| `labutil.py` | all | Completion summaries + graceful Ctrl+C (exit 130, keeps partials) |
+| `prompts.txt` | 4–6 | The shared prompt set — edit to race your own workload |
+
+`--list` on any bench/test script prints what a default run would cover.
+
 ## Troubleshooting
+
+<details>
+<summary>Connection refused on <code>bench_engines.py</code></summary>
+
+No server is listening. Start one in a separate terminal first
+(`uv run mlx_lm.server --model models/Qwen3-8B-mlx-4bit --port 8000` for
+mlx-lm; `rapid-mlx serve <alias>`; `ollama serve`), then re-run. The script
+says this instead of a traceback — believe it.
+
+</details>
+
+<details>
+<summary>Server 404 on <code>/v1/chat/completions</code></summary>
+
+`mlx_lm.server` routes by request model name: `--model` in the bench command
+must equal the server's `--model` string exactly (full path, not basename).
+Anything else makes the server look the name up on HF and 404.
+
+</details>
 
 <details>
 <summary><code>HF_TOKEN</code> / 401 / 403 errors on download</summary>
