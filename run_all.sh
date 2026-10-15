@@ -5,6 +5,8 @@
 #   MODEL_ID=<hf-id> ./run_all.sh. The engine race (step 6) stays interactive
 #   because it needs servers in separate terminals — see README step 6.
 set -euo pipefail
+# Graceful Ctrl+C: keep partial results (per-script JSON already written).
+trap 'echo "Interrupted — partial results kept in results/."; exit 130' INT
 cd "$(dirname "$0")"
 
 : "${HF_TOKEN:?Set HF_TOKEN first: export HF_TOKEN=\"hf_...\" (see README Setup)}"

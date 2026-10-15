@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import urllib.request
 from pathlib import Path
 
 from bench_engines import stream_once  # same streamed methodology as step 6
+from labutil import complete, guarded
 
 ROOT = Path(__file__).resolve().parent
 
@@ -56,6 +58,7 @@ def main() -> None:
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--base-url", default="http://localhost:11434/v1")
     args = ap.parse_args()
+    started = time.perf_counter()
 
     available = {m["name"]: m for m in ollama_models(args.base_url)}
     if not available:
@@ -70,6 +73,7 @@ def main() -> None:
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     prompts = load_prompts()
+    raced, skipped, wrote = [], [], []
     for name in wanted:
         meta = available[name]
         # Models without chat (e.g. embed/decision-only) have no completions
@@ -77,6 +81,7 @@ def main() -> None:
         caps = meta.get("capabilities")
         if caps is not None and "completion" not in caps:
             print(f"Skipping {name}: no chat support (capabilities={caps}).")
+            skipped.append(name)
             continue
         details = meta.get("details", {}) or {}
         print(f"Racing ollama:{name} "
@@ -97,8 +102,16 @@ def main() -> None:
                "runs": runs}
         path = results_dir / f"engines_ollama-{safe_tag(name)}.json"
         path.write_text(json.dumps(out, indent=2))
+        raced.append(name)
+        wrote.append(path)
         print(f"  wrote {path}")
+    details = [f"{len(raced)} model(s) raced, {sum(len(json.loads(p.read_text())['runs']) for p in wrote)} timed run(s)",
+               f"results: {', '.join(str(p) for p in wrote)}"]
+    if skipped:
+        details.append(f"skipped (no chat): {', '.join(skipped)}")
+    complete("Ollama race", details, started,
+             next_step="uv run python make_report.py")
 
 
 if __name__ == "__main__":
-    main()
+    guarded(main)

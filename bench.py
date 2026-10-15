@@ -22,6 +22,8 @@ import json
 import time
 from pathlib import Path
 
+from labutil import complete, guarded
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -97,28 +99,44 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None,
-                    help="Single MLX dir to bench (default: bf16 + 4bit pair).")
+                    help="Single MLX dir to bench (default: every local build).")
+    ap.add_argument("--list", action="store_true",
+                    help="List discoverable local builds and exit.")
     ap.add_argument("--repeats", type=int, default=3)
     args = ap.parse_args()
+    started = time.perf_counter()
 
     base = Path("models")
     targets = [args.model] if args.model else sorted(
         str(p) for p in base.glob("*mlx-bf16")
     ) + sorted(str(p) for p in base.glob("*mlx-4bit"))
     if not targets:
-        raise SystemExit("No models found. Run steps 1-3 of the README first.")
+        raise SystemExit("No models found in models/. Run steps 1-3 first, "
+                         "or download a ready-made build (MODELS.md §3).")
+    if args.list:
+        # Discovery mode: show what a default run would bench, then stop.
+        print("Local MLX builds (default run benches all of these):")
+        for t in targets:
+            print(f"  {t}")
+        return
 
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     prompts = load_prompts()
+    wrote = []
     for target in targets:
         print(f"Benchmarking {target} ...")
         data = benchmark_model(target, prompts, args.repeats)
-        name = Path(target).name.replace("models", "").strip("/-") or "model"
         path = results_dir / f"bench_{Path(target).name}.json"
         path.write_text(json.dumps(data, indent=2))
+        wrote.append((path, len(data["runs"])))
         print(f"  wrote {path}")
+    total_runs = sum(n for _, n in wrote)
+    complete("Benchmark",
+             [f"{len(targets)} build(s), {total_runs} timed run(s)",
+              f"results: {', '.join(str(p) for p, _ in wrote)}"],
+             started, next_step="uv run python make_report.py")
 
 
 if __name__ == "__main__":
-    main()
+    guarded(main)

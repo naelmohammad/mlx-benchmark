@@ -22,7 +22,10 @@ import json
 import platform
 import statistics
 import subprocess
+import time
 from pathlib import Path
+
+from labutil import complete, guarded
 
 ROOT = Path(__file__).resolve().parent
 FORMATS = ("md", "html", "pdf", "xlsx", "json", "csv")
@@ -356,6 +359,7 @@ def main() -> None:
     ap.add_argument("--format", default="all", choices=("all",) + FORMATS,
                     help="Which report to write (default: all six).")
     args = ap.parse_args()
+    started = time.perf_counter()
 
     wanted = FORMATS if args.format == "all" else (args.format,)
     report = collect()
@@ -374,7 +378,11 @@ def main() -> None:
         elif fmt == "pdf":
             render_pdf(report, base.with_suffix(".pdf"))
         print(f"wrote {base.with_suffix('.' + fmt)}")
+    complete("Report",
+             [f"{len(wanted)} format(s): "
+              f"{', '.join(str(base.with_suffix('.' + f)) for f in wanted)}"],
+             started, next_step="open REPORT.html, or commit REPORT.*")
 
 
 if __name__ == "__main__":
-    main()
+    guarded(main)

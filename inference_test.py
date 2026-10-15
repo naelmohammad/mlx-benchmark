@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
+
+from labutil import complete, guarded
 
 ROOT = Path(__file__).resolve().parent
 MAX_TOKENS = 200
@@ -60,7 +63,10 @@ def run(model_path: str, prompts: list[str]) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None)
+    ap.add_argument("--list", action="store_true",
+                    help="List discoverable local builds and exit.")
     args = ap.parse_args()
+    started = time.perf_counter()
 
     prompts = [l.strip() for l in (ROOT / "prompts.txt").read_text().splitlines()
                if l.strip() and not l.startswith("#")]
@@ -69,17 +75,31 @@ def main() -> None:
         str(p) for p in base.glob("*mlx-bf16")
     ) + sorted(str(p) for p in base.glob("*mlx-4bit"))
     if not targets:
-        raise SystemExit("No models found. Run steps 1-3 of the README first.")
+        raise SystemExit("No models found in models/. Run steps 1-3 first, "
+                         "or download a ready-made build (MODELS.md §3).")
+    if args.list:
+        print("Local MLX builds (default run tests all of these):")
+        for t in targets:
+            print(f"  {t}")
+        return
 
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
+    wrote = []
     for target in targets:
         print(f"Testing {target} ...")
         data = run(target, prompts)
         path = results_dir / f"inference_{Path(target).name}.json"
         path.write_text(json.dumps(data, indent=2))
+        wrote.append((path, len(data["cases"])))
         print(f"  wrote {path}")
+    complete("Inference test",
+             [f"{len(targets)} build(s), "
+              f"{sum(n for _, n in wrote)} transcripts saved",
+              f"results: {', '.join(str(p) for p, _ in wrote)}",
+              "read the transcripts before trusting any tok/s number"],
+             started, next_step="uv run python bench.py")
 
 
 if __name__ == "__main__":
-    main()
+    guarded(main)

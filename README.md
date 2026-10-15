@@ -40,7 +40,9 @@ export HF_TOKEN="hf_..."   # required: every download step uses it
 ## The pipeline
 
 Tick each box as you go. Every step shows the command, what to check, and
-where to learn more.
+where to learn more. Scripts discover local builds automatically — `ls models/`
+or any script's `--list` shows what a default run covers, and every script ends
+with a summary (Ctrl+C keeps partial results instead of a traceback).
 
 ### 1. Download the weights ⬇️
 

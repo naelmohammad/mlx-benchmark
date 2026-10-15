@@ -22,6 +22,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from labutil import complete, guarded
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -97,6 +99,7 @@ def main() -> None:
     ap.add_argument("--tag", required=True, help="e.g. mlx-lm or rapid-mlx")
     ap.add_argument("--repeats", type=int, default=3)
     args = ap.parse_args()
+    started = time.perf_counter()
 
     prompts = [l.strip() for l in (ROOT / "prompts.txt").read_text().splitlines()
                if l.strip() and not l.startswith("#")]
@@ -126,7 +129,11 @@ def main() -> None:
     path = results_dir / f"engines_{args.tag}.json"
     path.write_text(json.dumps(out, indent=2))
     print(f"wrote {path}")
+    complete(f"Engine race ({args.tag})",
+             [f"{len(runs)} timed run(s) over {len(prompts)} prompt(s)",
+              f"result: {path}"],
+             started, next_step="uv run python make_report.py")
 
 
 if __name__ == "__main__":
-    main()
+    guarded(main)
