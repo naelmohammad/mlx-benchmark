@@ -109,6 +109,7 @@ def main() -> None:
                         "ttft_seconds": None, "ttft_to": None,
                         "total_seconds": None, "output_chars": None,
                         "chars_per_sec": None, "completion_tokens": None,
+                        "prompt_tokens": None,
                         "tokens_per_sec": None, "itl_mean_ms": None,
                         "itl_p50_ms": None, "cpu_percent": None,
                         "mem_used_gb": None, "mem_percent": None}

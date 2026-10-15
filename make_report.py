@@ -92,6 +92,8 @@ def collect() -> dict:
             report["models"].append({"name": m.name, "size_gb": dir_size_gb(m)})
 
     for b in sorted(results.glob("bench_*.json")):
+        if b.name.startswith("bench_shapes_"):
+            continue  # handled by the single-request section below
         d = json.loads(b.read_text())
         runs = d["runs"]
         build = Path(d["model"]).name
@@ -190,6 +192,12 @@ def collect() -> dict:
             "model": Path(d["model"]).name,
             "cases": len(d["cases"]), "file": str(f.relative_to(ROOT)),
         })
+
+    for s in sorted(results.glob("bench_shapes_*.json")):
+        d = json.loads(s.read_text())
+        build = Path(d["model"]).name
+        for row in d.get("shapes", []):
+            report.setdefault("single", []).append({"build": build, **row})
     return report
 
 
@@ -441,23 +449,43 @@ def render_md(r: dict, charts_dir: str = "charts") -> str:
               "weights in peak memory; prompt-caching effects excluded by "
               "fresh prompts per run.",
               ""]
+    if r.get("single"):
+        lines += ["## Single request results (fixed pp/tg workloads)", "",
+                  "TTFT = prefill time; TPOT = ms per output token; PP TPS = "
+                  "prefill rate; TG TPS = decode rate; Throughput = all "
+                  "tokens ÷ wall (total utilization):", "",
+                  "| test | build | TTFT ms | TPOT ms | PP TPS | TG TPS | "
+                  "E2E s | Throughput | peak mem GB |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for row in r["single"]:
+            lines.append(f"| {row['test']} | `{row['build']}` | "
+                         f"{row['ttft_ms']} | {row['tpot_ms']} | "
+                         f"{row['pp_tps']} | {row['tg_tps']} | {row['e2e_s']} | "
+                         f"{row['throughput_tps']} | {row['peak_mem_gb']} |")
+        lines.append("")
     if r.get("frontiers"):
-        lines += ["## Pareto frontier (throughput vs latency)", ""]
+        lines += ["## Continuous batching (Pareto frontier)", ""]
         for f in r["frontiers"]:
             lines.append(f"![pareto]({charts_dir}/pareto-{f['engine']}.svg)")
             lines.append("")
+            base = next((p["agg_tps"] for p in f["points"]
+                         if p.get("agg_tps")), None)
             lines += [f"### {f['engine']}:{f['model']}", "",
-                      "| concurrency | agg TPS | RPS | p50 latency ms | "
-                      "ITL p50 ms | errors |",
-                      "|---|---|---|---|---|---|"]
+                      "| batch | TG TPS | speedup | PP TPS | PP TPS/req | "
+                      "TTFT ms | E2E s | errors |",
+                      "|---|---|---|---|---|---|---|---|"]
             for p in f["points"]:
-                lines.append(f"| {p['concurrency']} | {p['agg_tps']} | "
-                             f"{p['rps']} | {p['p50_latency_ms']} | "
-                             f"{p['itl_p50_ms']} | {p['errors']} |")
+                agg = p.get("agg_tps")
+                lines.append(
+                    f"| {p['concurrency']}x | {agg} | "
+                    f"{(f'{agg / base:.2f}x' if agg and base else 'n/a')} | "
+                    f"{p.get('pp_tps')} | {p.get('pp_tps_per_req')} | "
+                    f"{p.get('ttft_mean_ms')} | {p.get('e2e_p50_s')} | "
+                    f"{p['errors']} |")
             lines.append("")
-        lines += ["Read it: TPS climbs with concurrency, then flattens while "
-                  "latency climbs — the knee is the capacity answer. Past it, "
-                  "extra load buys throughput with latency (contention).", ""]
+        lines += ["Read it: TG TPS climbs with batch size, then flattens while "
+                  "TTFT/E2E climb — the knee is the capacity answer. Speedup "
+                  "is relative to the 1x row of the same sweep.", ""]
     lines += ["## Quality–Cost–Precision triad", "",
               "Quality is a human read of transcripts, never a computed score. "
               "Cost is time per 1M tokens at the measured rate (× $/GPU-hour "
@@ -596,21 +624,41 @@ def render_html(r: dict, svgs: dict | None = None) -> str:
     out.write("<p class='note'>Limits: batch size 1; single machine; greedy "
               "decoding for engines; KV-cache growth not isolated from weights "
               "in peak memory.</p>")
+    if r.get("single"):
+        out.write("<h2>Single request results (fixed pp/tg workloads)</h2>"
+                  "<table><tr><th>test</th><th>build</th><th>TTFT ms</th>"
+                  "<th>TPOT ms</th><th>PP TPS</th><th>TG TPS</th><th>E2E s</th>"
+                  "<th>Throughput</th><th>peak mem GB</th></tr>")
+        for row in r["single"]:
+            out.write(f"<tr><td>{esc(row['test'])}</td>"
+                      f"<td><code>{esc(row['build'])}</code></td>"
+                      f"<td>{row['ttft_ms']}</td><td>{row['tpot_ms']}</td>"
+                      f"<td>{row['pp_tps']}</td><td>{row['tg_tps']}</td>"
+                      f"<td>{row['e2e_s']}</td>"
+                      f"<td>{row['throughput_tps']}</td>"
+                      f"<td>{row['peak_mem_gb']}</td></tr>")
+        out.write("</table>")
     if r.get("frontiers"):
-        out.write("<h2>Pareto frontier (throughput vs latency)</h2>")
+        out.write("<h2>Continuous batching (Pareto frontier)</h2>")
         for f in r["frontiers"]:
             key = f"pareto-{f['engine']}"
             if svgs.get(key):
                 out.write(svgs[key])
+            base = next((p["agg_tps"] for p in f["points"]
+                         if p.get("agg_tps")), None)
             out.write(f"<h3>{esc(f['engine'])}:{esc(f['model'])}</h3>"
-                      "<table><tr><th>concurrency</th><th>agg TPS</th>"
-                      "<th>RPS</th><th>p50 latency ms</th><th>ITL p50 ms</th>"
-                      "<th>errors</th></tr>")
+                      "<table><tr><th>batch</th><th>TG TPS</th><th>speedup</th>"
+                      "<th>PP TPS</th><th>PP TPS/req</th><th>TTFT ms</th>"
+                      "<th>E2E s</th><th>errors</th></tr>")
             for p in f["points"]:
-                out.write(f"<tr><td>{p['concurrency']}</td>"
-                          f"<td>{p['agg_tps']}</td><td>{p['rps']}</td>"
-                          f"<td>{p['p50_latency_ms']}</td>"
-                          f"<td>{p['itl_p50_ms']}</td><td>{p['errors']}</td></tr>")
+                agg = p.get("agg_tps")
+                out.write(f"<tr><td>{p['concurrency']}x</td><td>{agg}</td>"
+                          f"<td>{(f'{agg / base:.2f}x' if agg and base else 'n/a')}</td>"
+                          f"<td>{p.get('pp_tps')}</td>"
+                          f"<td>{p.get('pp_tps_per_req')}</td>"
+                          f"<td>{p.get('ttft_mean_ms')}</td>"
+                          f"<td>{p.get('e2e_p50_s')}</td>"
+                          f"<td>{p['errors']}</td></tr>")
             out.write("</table>")
     out.write("<h2>Quality–Cost–Precision triad</h2><p class='note'>Quality is "
               "a human read of transcripts, never a computed score. Cost is "
@@ -748,15 +796,33 @@ def render_xlsx(r: dict, path: Path) -> None:
         w2.freeze_panes = "A2"
         w2.auto_filter.ref = w2.dimensions
 
+    if r.get("single"):
+        ws1 = wb.create_sheet("Single request")
+        ws1.append(["test", "build", "TTFT ms", "TPOT ms", "PP TPS", "TG TPS",
+                    "E2E s", "Throughput", "peak GB"])
+        for c in ws1[1]:
+            c.font = bold
+        for s in r["single"]:
+            ws1.append([s["test"], s["build"], s["ttft_ms"], s["tpot_ms"],
+                        s["pp_tps"], s["tg_tps"], s["e2e_s"],
+                        s["throughput_tps"], s["peak_mem_gb"]])
+        ws1.freeze_panes = "A2"
+        ws1.auto_filter.ref = ws1.dimensions
     for f in r.get("frontiers", []):
-        w3 = wb.create_sheet(f"Pareto {f['engine']}"[:31])
-        w3.append(["concurrency", "agg TPS", "RPS", "p50 latency ms",
-                   "ITL p50 ms", "errors"])
+        base = next((p["agg_tps"] for p in f["points"]
+                     if p.get("agg_tps")), None)
+        w3 = wb.create_sheet(f"Batching {f['engine']}"[:31])
+        w3.append(["batch", "TG TPS", "speedup", "PP TPS", "PP TPS/req",
+                   "TTFT ms", "E2E s", "errors"])
         for c in w3[1]:
             c.font = bold
         for p in f["points"]:
-            w3.append([p["concurrency"], p["agg_tps"], p["rps"],
-                       p["p50_latency_ms"], p["itl_p50_ms"], p["errors"]])
+            w3.append([f"{p['concurrency']}x", p["agg_tps"],
+                       (f"{p['agg_tps'] / base:.2f}x"
+                        if p.get("agg_tps") and base else "n/a"),
+                       p.get("pp_tps"), p.get("pp_tps_per_req"),
+                       p.get("ttft_mean_ms"), p.get("e2e_p50_s"),
+                       p["errors"]])
     wt = wb.create_sheet("Triad")
     wt.append(["build", "quality", "sec/1M tok", "size GB", "bits",
                "decode tok/s", "tok/s/GB"])
@@ -868,12 +934,26 @@ def render_pdf(r: dict, path: Path) -> None:
         story.append(Paragraph("Errors: zero errored runs in this report.",
                                styles["Normal"]))
         story.append(Spacer(1, .15 * inch))
+    if r.get("single"):
+        section("Single request results",
+                ["test", "build", "TTFT ms", "TPOT ms", "PP TPS", "TG TPS",
+                 "E2E s", "Throughput", "peak GB"],
+                [[s["test"], s["build"], s["ttft_ms"], s["tpot_ms"],
+                  s["pp_tps"], s["tg_tps"], s["e2e_s"],
+                  s["throughput_tps"], s["peak_mem_gb"]]
+                 for s in r["single"]],
+                "No shapes run (bench.py --shapes).")
     for f in r.get("frontiers", []):
-        section(f"Pareto frontier: {f['engine']}:{f['model']}",
-                ["concurrency", "agg TPS", "RPS", "p50 latency ms",
-                 "ITL p50 ms", "errors"],
-                [[p["concurrency"], p["agg_tps"], p["rps"],
-                  p["p50_latency_ms"], p["itl_p50_ms"], p["errors"]]
+        base = next((p["agg_tps"] for p in f["points"]
+                     if p.get("agg_tps")), None)
+        section(f"Continuous batching: {f['engine']}:{f['model']}",
+                ["batch", "TG TPS", "speedup", "PP TPS", "PP TPS/req",
+                 "TTFT ms", "E2E s", "errors"],
+                [[f"{p['concurrency']}x", p["agg_tps"],
+                  (f"{p['agg_tps'] / base:.2f}x"
+                   if p.get("agg_tps") and base else "n/a"),
+                  p.get("pp_tps"), p.get("pp_tps_per_req"),
+                  p.get("ttft_mean_ms"), p.get("e2e_p50_s"), p["errors"]]
                  for p in f["points"]],
                 "No sweep run.")
     section("Quality–Cost–Precision triad",

@@ -24,6 +24,8 @@ where results go, and when to run what.
 | Rapid-MLX race | `bench_rapid.py` | Alias race (+ `--sweep`), tagged `rapid-mlx` | Tests the 4× claim on shared methodology |
 | aiperf import | `import_aiperf.py` | aiperf aggregates as labeled rows | Independent validator, never blended into runs |
 | Report build | `make_report.py` | Merges all JSON into md/html/pdf/xlsx/json/csv + charts | A benchmark you can't re-read is one you didn't run |
+| Shapes matrix | `bench.py --shapes` | Fixed pp/tg workloads: TTFT/TPOT/PP/TG/E2E/Throughput/peak mem | Workload-fixed numbers comparable across builds |
+| Batching sweep | `bench_engines.py --sweep` | Batch table with speedup + PP TPS/req + Pareto chart | Finds the knee where load stops paying |
 
 ## How — commands
 

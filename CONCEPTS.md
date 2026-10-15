@@ -144,6 +144,21 @@ The full metric vocabulary (all four in every race table, aiperf-style):
   ÷ wall time) under concurrency for capacity planning.
 - **RPS (request throughput)** — requests ÷ wall time; what a server survives.
 
+Metrics reference (omlx-style single-request and batching tables):
+
+- **PP TPS (prompt processing)** — input tokens ÷ prefill time; prefill is
+  parallel, so this number is large (thousands) and grows with prompt length.
+- **TG TPS (token generation)** — output tokens ÷ decode time; the inverse of
+  TPOT. This is "the" tok/s.
+- **Throughput (total)** — (prompt + generated) ÷ wall; whole-system
+  utilization in one number, dominated by whichever phase dominates.
+- **Speedup** — TG TPS ÷ single-request TG TPS; the batching payoff as a
+  multiple. Sub-linear speedup with exploding TTFT = serialization, not
+  parallelism (we measured exactly this on Ollama: 1.00x at batch 4).
+- **PP TPS/req** — PP TPS ÷ batch size; per-request prefill under load. When
+  it collapses (1023 → 40 in our Ollama sweep), requests are queueing, not
+  batching.
+
 **Pareto frontier:** race concurrency 1, 2, 4… and plot aggregate TPS vs p50
 latency (`--sweep 1,2,4`). TPS climbs, flattens (saturation), latency climbs
 — the knee is the capacity answer. Past it, load buys throughput with

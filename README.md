@@ -137,6 +137,9 @@ step 5.
 
 ```bash
 uv run python bench.py
+# fixed workloads, omlx style (exact prompt/output token counts):
+uv run python bench.py --model models/Qwen3-8B-mlx-4bit \
+  --shapes pp1024/tg128,pp4096/tg128 --repeats 1
 ```
 
 <details>
@@ -193,7 +196,9 @@ uv run python bench_engines.py --base-url http://localhost:8001/v1 \
 
 Console prints an aiperf-style table per race (TTFT / ITL / request latency /
 token throughput with avg·min·max·p99·p90·p50·std); `--concurrency N` overlaps
-requests to measure real contention.
+requests to measure real contention. `--sweep 1,2,4` prints the batching
+table instead (batch | TG TPS | speedup | PP TPS | PP TPS/req | TTFT | E2E) —
+all six report formats render it, plus the Pareto scatter.
 
 Terminal 4 — race llama.cpp (bare engine, explicit knobs):
 

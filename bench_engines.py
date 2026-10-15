@@ -49,6 +49,7 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
     chars = 0
     reasoning_chars = 0
     completion_tokens = None
+    prompt_tokens = None
     arrivals: list[float] = []
     # SSE stream: each "data:" line is one JSON chunk; "[DONE]" ends it.
     # The clock starts before the request so TTFT includes network + prefill.
@@ -86,9 +87,12 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
             reasoning_chars += len(think)
             # Some servers omit `usage` on streams (requested via
             # stream_options.include_usage above); then we fall back to chars/sec.
+            # Prompt tokens feed PP TPS (prefill rate = prompt/TTFT).
             usage = chunk.get("usage") or {}
             if usage.get("completion_tokens"):
                 completion_tokens = usage["completion_tokens"]
+            if usage.get("prompt_tokens"):
+                prompt_tokens = usage["prompt_tokens"]
     total = time.perf_counter() - t0
     ttft = (first_token_at - t0) if first_token_at else None
     decode_s = (total - ttft) if ttft else total
@@ -100,6 +104,7 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
         "total_seconds": round(total, 3),
         "output_chars": chars,
         "reasoning_chars": reasoning_chars,
+        "prompt_tokens": prompt_tokens,
         "chars_per_sec": round(chars / decode_s, 1) if decode_s > 0 else None,
         "completion_tokens": completion_tokens,
         "tokens_per_sec": (
@@ -195,8 +200,8 @@ def race_at(base_url: str, model: str, prompts: list[str], repeats: int,
                     "ttft_seconds": None, "ttft_to": None,
                     "total_seconds": None, "output_chars": None,
                     "reasoning_chars": None, "chars_per_sec": None,
-                    "completion_tokens": None, "tokens_per_sec": None,
-                    "tpot_ms": None, "itl_mean_ms": None,
+                    "completion_tokens": None, "prompt_tokens": None,
+                    "tokens_per_sec": None, "tpot_ms": None, "itl_mean_ms": None,
                     "itl_p50_ms": None, "cpu_percent": None,
                     "mem_used_gb": None, "mem_percent": None}
 
@@ -209,7 +214,12 @@ def race_at(base_url: str, model: str, prompts: list[str], repeats: int,
 
 def frontier_point(runs: list[dict], makespan: float,
                    concurrency: int) -> dict:
-    """One Pareto point: throughput vs latency at a concurrency level."""
+    """One Pareto/batching point: throughput vs latency at a concurrency level.
+
+    PP TPS = prefill rate (prompt tokens ÷ TTFT); PP TPS/req divides by batch
+    size to show per-request prefill under load. Speedup is computed against
+    the baseline level when printing/reporting (not stored: the file must
+    stay self-describing without cross-referencing)."""
     from charts import pct
 
     ok = [r for r in runs if not r.get("error")]
@@ -217,33 +227,55 @@ def frontier_point(runs: list[dict], makespan: float,
                  if r.get("total_seconds") is not None)
     itls = [r["itl_mean_ms"] for r in ok if r.get("itl_mean_ms") is not None]
     toks = sum(r["completion_tokens"] or 0 for r in ok)
+    pp_rates = [r["prompt_tokens"] / r["ttft_seconds"] for r in ok
+                if r.get("prompt_tokens") and r.get("ttft_seconds")]
     return {"concurrency": concurrency,
             "agg_tps": round(toks / makespan, 1) if makespan > 0 and ok else None,
             "rps": round(len(ok) / makespan, 2) if makespan > 0 else None,
             "p50_latency_ms": pct(lat, 50) if lat else None,
+            "e2e_p50_s": (round(pct(lat, 50) / 1000, 3) if lat else None),
             "itl_p50_ms": pct(itls, 50) if itls else None,
+            "pp_tps": round(sum(pp_rates) / len(pp_rates), 1) if pp_rates else None,
+            "pp_tps_per_req": (round(sum(pp_rates) / len(pp_rates) / concurrency, 1)
+                               if pp_rates and concurrency else None),
+            "ttft_mean_ms": (round(sum(r["ttft_seconds"] * 1000 for r in ok
+                                       if r.get("ttft_seconds") is not None)
+                                   / len([r for r in ok
+                                          if r.get("ttft_seconds") is not None]), 1)
+                             if any(r.get("ttft_seconds") is not None for r in ok)
+                             else None),
             "errors": len(runs) - len(ok)}
 
 
 def print_frontier(tag: str, model: str, frontier: list[dict]) -> None:
-    """The Pareto frontier: throughput gained per latency paid, by load."""
+    """Batching table: throughput gained per latency paid, by load.
+
+    Speedup is relative to the first (baseline) level in this sweep, so the
+    table is self-contained. PP TPS/req shows per-request prefill decay under
+    load — the number that tells you when batching hurts more than it helps.
+    """
     from rich.console import Console
     from rich.table import Table
 
-    table = Table(title=f"Pareto frontier : {tag} : {model} "
-                        "(higher TPS vs lower latency)",
+    base = next((p["agg_tps"] for p in frontier if p.get("agg_tps")), None)
+    table = Table(title=f"Batching : {tag} : {model} "
+                        "(continuous load, higher batch → ?)",
                   show_header=True, header_style="bold")
-    for h in ("concurrency", "agg TPS", "RPS", "p50 latency ms", "ITL p50 ms",
-              "errors"):
+    for h in ("batch", "TG TPS", "speedup", "PP TPS", "PP TPS/req",
+              "TTFT ms", "E2E s", "errors"):
         table.add_column(h, justify="right")
     for p in frontier:
-        table.add_row(str(p["concurrency"]), str(p["agg_tps"]), str(p["rps"]),
-                      str(p["p50_latency_ms"]), str(p["itl_p50_ms"]),
+        agg = p.get("agg_tps")
+        table.add_row(str(p["concurrency"]),
+                      str(agg),
+                      (f"{agg / base:.2f}x" if agg and base else "n/a"),
+                      str(p.get("pp_tps")), str(p.get("pp_tps_per_req")),
+                      str(p.get("ttft_mean_ms")), str(p.get("e2e_p50_s")),
                       str(p["errors"]))
     Console().print(table)
-    print("Read it: TPS should climb with concurrency, then flatten (the "
-          "saturation point) while latency climbs — past the knee, extra load "
-          "buys throughput with latency. That knee is your capacity answer.")
+    print("Read it: TG TPS climbs with batch size, then flattens (saturation) "
+          "while TTFT/E2E climb — the knee is the capacity answer. Speedup "
+          "past the knee buys throughput with latency.")
 
 
 def main() -> None:

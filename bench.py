@@ -96,6 +96,68 @@ def benchmark_model(model_path: str, prompts: list[str], repeats: int) -> dict:
     return out
 
 
+def shape_ids(tokenizer, pp: int) -> list[int]:
+    """Exactly pp prompt token IDs: chat-wrapped seed text, padded with
+    neutral filler (or truncated) so prefill cost is workload-fixed, omlx
+    style (pp1024, pp4096, …). Token IDs go straight in — no detokenize
+    round-trip that would change the count."""
+    seed = "Explain attention in transformers in three sentences."
+    if hasattr(tokenizer, "apply_chat_template"):
+        try:
+            seed = tokenizer.apply_chat_template(
+                [{"role": "user", "content": seed}],
+                tokenize=False, add_generation_prompt=True)
+        except Exception:
+            pass
+    ids = tokenizer.encode(seed)
+    if len(ids) >= pp:
+        return ids[:pp]
+    filler = tokenizer.encode(" The quick brown fox jumps over the lazy dog.")
+    while len(ids) < pp:
+        ids += filler
+    return ids[:pp]
+
+
+def benchmark_shapes(model_path: str, shapes: list[tuple[int, int]],
+                     repeats: int) -> dict:
+    """Single-request matrix: fixed prompt tokens (pp) × fixed output (tg).
+
+    Row semantics match omlx: TTFT = prefill time; TPOT = decode per token;
+    PP TPS = prefill rate; TG TPS = decode rate; E2E = wall; Throughput =
+    (pp + generated) / wall (total system utilization); Peak Mem observed.
+    """
+    from mlx_lm import load
+    from mlx_lm.sample_utils import make_sampler
+
+    model, tokenizer = load(model_path)
+    sampler = make_sampler(temp=0.0)
+    out = {"model": model_path, "repeats": repeats, "shapes": []}
+    timed_run(model, tokenizer, shape_ids(tokenizer, 32), 8, sampler)  # warmup
+    for pp, tg in shapes:
+        ids = shape_ids(tokenizer, pp)
+        for _ in range(repeats):
+            resp, dt = timed_run(model, tokenizer, ids, tg, sampler)
+            pt = getattr(resp, "prompt_tokens", None) or pp
+            gt = getattr(resp, "generation_tokens", None) or 0
+            ppt = getattr(resp, "prompt_tps", None)
+            tgt = getattr(resp, "generation_tps", None)
+            ttft_ms = round(pt / ppt * 1000, 1) if ppt else None
+            tpot = round(1000 / tgt, 2) if tgt else None
+            peak = getattr(resp, "peak_memory", None) or 0
+            out["shapes"].append({
+                "test": f"pp{pp}/tg{tg}",
+                "ttft_ms": ttft_ms, "tpot_ms": tpot,
+                "pp_tps": round(ppt, 1) if ppt else None,
+                "tg_tps": round(tgt, 1) if tgt else None,
+                "e2e_s": round(dt, 3),
+                "throughput_tps": (round((pt + gt) / dt, 1)
+                                   if dt > 0 else None),
+                "peak_mem_gb": (round(peak / 1e9, 3) if peak > 1000
+                                else (round(peak, 3) or None)),
+            })
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None,
@@ -103,6 +165,9 @@ def main() -> None:
     ap.add_argument("--list", action="store_true",
                     help="List discoverable local builds and exit.")
     ap.add_argument("--repeats", type=int, default=3)
+    ap.add_argument("--shapes", default=None,
+                    help="Single-request matrix, e.g. --shapes pp1024/tg128,"
+                         "pp4096/tg128 (writes bench_shapes_<build>.json).")
     args = ap.parse_args()
     started = time.perf_counter()
 
@@ -120,19 +185,33 @@ def main() -> None:
             print(f"  {t}")
         return
 
+    shapes = None
+    if args.shapes:
+        # e.g. "pp1024/tg128,pp4096/tg128" -> [(1024, 128), (4096, 128)]
+        shapes = []
+        for spec in args.shapes.split(","):
+            pp, tg = spec.strip().lower().split("/tg")
+            shapes.append((int(pp.lstrip("pp")), int(tg)))
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     prompts = load_prompts()
     wrote = []
     for target in targets:
-        print(f"Benchmarking {target} ...")
-        data = benchmark_model(target, prompts, args.repeats)
-        path = results_dir / f"bench_{Path(target).name}.json"
+        if shapes:
+            print(f"Benchmarking shapes {args.shapes} on {target} ...")
+            data = benchmark_shapes(target, shapes, args.repeats)
+            path = results_dir / f"bench_shapes_{Path(target).name}.json"
+            n = len(data["shapes"])
+        else:
+            print(f"Benchmarking {target} ...")
+            data = benchmark_model(target, prompts, args.repeats)
+            path = results_dir / f"bench_{Path(target).name}.json"
+            n = len(data["runs"])
         path.write_text(json.dumps(data, indent=2))
-        wrote.append((path, len(data["runs"])))
+        wrote.append((path, n))
         print(f"  wrote {path}")
     total_runs = sum(n for _, n in wrote)
-    complete("Benchmark",
+    complete("Benchmark" + (" (shapes)" if shapes else ""),
              [f"{len(targets)} build(s), {total_runs} timed run(s)",
               f"results: {', '.join(str(p) for p, _ in wrote)}"],
              started, next_step="uv run python make_report.py")
