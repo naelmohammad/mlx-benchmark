@@ -9,7 +9,8 @@ endpoint. Same prompts, same machine, your own numbers.
 New to the terminology (quantization, KV cache, TTFT, …)? Read
 [CONCEPTS.md](CONCEPTS.md) first — it explains every step's why/what/how.
 Models, download IDs, and Ollama / llama.cpp alternatives live in
-[MODELS.md](MODELS.md).
+[MODELS.md](MODELS.md). Who tests what, why, and how to read the numbers:
+[TESTING.md](TESTING.md).
 
 ## Choose your path
 

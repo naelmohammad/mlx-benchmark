@@ -88,11 +88,22 @@ def main() -> None:
               f"(runner={details.get('runner', '?')}, "
               f"size={round(meta.get('size', 0) / 1e9, 1)} GB) ...")
         runs = []
+        errors = 0
         for prompt in prompts:
             stream_once(args.base_url, name, prompt)  # warmup, discarded
             for _ in range(args.repeats):
-                r = stream_once(args.base_url, name, prompt)
-                r["prompt"] = prompt[:80]
+                # Per-run errors are recorded, not fatal (see bench_engines).
+                try:
+                    r = stream_once(args.base_url, name, prompt)
+                    r["prompt"] = prompt[:80]
+                except Exception as e:  # noqa: BLE001 — verbatim in JSON
+                    errors += 1
+                    r = {"prompt": prompt[:80],
+                         "error": f"{type(e).__name__}: {e}",
+                         "ttft_seconds": None, "ttft_to": None,
+                         "total_seconds": None, "output_chars": None,
+                         "chars_per_sec": None, "completion_tokens": None,
+                         "tokens_per_sec": None}
                 runs.append(r)
         out = {"engine_tag": "ollama", "base_url": args.base_url,
                "model": name, "repeats": args.repeats,
@@ -105,7 +116,10 @@ def main() -> None:
         raced.append(name)
         wrote.append(path)
         print(f"  wrote {path}")
-    details = [f"{len(raced)} model(s) raced, {sum(len(json.loads(p.read_text())['runs']) for p in wrote)} timed run(s)",
+    all_runs = [r for p in wrote for r in json.loads(p.read_text())["runs"]]
+    n_err = sum(1 for r in all_runs if r.get("error"))
+    details = [f"{len(raced)} model(s) raced, {len(all_runs) - n_err}/{len(all_runs)} runs ok"
+               + (f" ({n_err} errored, see JSON)" if n_err else ""),
                f"results: {', '.join(str(p) for p in wrote)}"]
     if skipped:
         details.append(f"skipped (no chat): {', '.join(skipped)}")

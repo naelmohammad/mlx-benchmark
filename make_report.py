@@ -16,15 +16,18 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import html
 import io
 import json
 import platform
+import shutil
 import statistics
 import subprocess
 import time
 from pathlib import Path
 
+from charts import bar_chart, dist
 from labutil import complete, guarded
 
 ROOT = Path(__file__).resolve().parent
@@ -69,8 +72,20 @@ def collect() -> dict:
     """Read every results file into one plain-data report dict."""
     results = ROOT / "results"
     models_dir = ROOT / "models"
-    report: dict = {"machine": sys_info(), "models": [], "inprocess": [],
-                    "race": [], "qualitative": [], "runs": []}
+    prompts = [l.strip() for l in (ROOT / "prompts.txt").read_text().splitlines()
+               if l.strip() and not l.startswith("#")] \
+        if (ROOT / "prompts.txt").exists() else []
+    disk = shutil.disk_usage(ROOT)
+    report: dict = {
+        "meta": {
+            "generated_at": datetime.datetime.now().astimezone().isoformat(
+                timespec="seconds"),
+            "prompts": len(prompts),
+            "disk_free_gb": round(disk.free / 1e9, 1),
+        },
+        "machine": sys_info(), "models": [], "inprocess": [],
+        "race": [], "qualitative": [], "errors": [], "runs": [],
+    }
 
     if models_dir.exists():
         for m in sorted(models_dir.glob("*")):
@@ -83,10 +98,18 @@ def collect() -> dict:
         report["inprocess"].append({
             "build": build, "repeats": d.get("repeats"),
             "prefill_tps": mean(runs, "prompt_tps"),
-            "decode_tps": mean(runs, "generation_tps"),
+            "decode": dist(runs, "generation_tps"),
+            "ttft": dist(runs, "wall_seconds"),
             "peak_memory_gb": mean(runs, "peak_memory_gb"),
+            "prompt_tokens_mean": mean(runs, "prompt_tokens"),
+            "gen_tokens_mean": mean(runs, "generation_tokens"),
+            "errors": sum(1 for r in runs if r.get("error")),
         })
         for r in runs:
+            if r.get("error"):
+                report["errors"].append({"file": b.name, "build": build,
+                                         "prompt": r.get("prompt"),
+                                         "error": r["error"]})
             report["runs"].append({"kind": "inprocess", "file": b.name,
                                    "build": build, **r})
 
@@ -95,14 +118,24 @@ def collect() -> dict:
         runs = d["runs"]
         rate = mean(runs, "tokens_per_sec")
         unit = "tok/s" if rate is not None else "chars/s"
+        key = "tokens_per_sec" if rate is not None else "chars_per_sec"
         if rate is None:
             rate = mean(runs, "chars_per_sec")
         report["race"].append({
             "engine": d["engine_tag"], "model": d["model"],
             "repeats": d.get("repeats"), "ttft_s": mean(runs, "ttft_seconds"),
+            "ttft": dist(runs, "ttft_seconds"),
             "decode_rate": rate, "rate_unit": unit,
+            "decode": dist(runs, key),
+            "errors": sum(1 for r in runs if r.get("error")),
         })
         for r in runs:
+            if r.get("error"):
+                report["errors"].append({"file": e.name,
+                                         "engine": d["engine_tag"],
+                                         "model": d["model"],
+                                         "prompt": r.get("prompt"),
+                                         "error": r["error"]})
             report["runs"].append({"kind": "engine", "file": e.name,
                                    "engine": d["engine_tag"],
                                    "model": d["model"], **r})
@@ -116,11 +149,54 @@ def collect() -> dict:
     return report
 
 
-def render_md(r: dict) -> str:
+def chart_svgs(r: dict) -> dict:
+    """Build the three report charts; keys map to charts/<name>.svg files."""
+    return {
+        "decode-tps": bar_chart(
+            "Decode throughput (higher is better)",
+            [b["build"] for b in r["inprocess"]],
+            [b["decode"]["mean"] for b in r["inprocess"]], "tok/s"),
+        "peak-mem": bar_chart(
+            "Peak memory (lower is better)",
+            [b["build"] for b in r["inprocess"]],
+            [b["peak_memory_gb"] for b in r["inprocess"]], "GB"),
+        "ttft": bar_chart(
+            "Time to first token (lower is better)",
+            [f"{e['engine']}:{e['model']}" for e in r["race"]],
+            [e["ttft_s"] for e in r["race"]], "s"),
+    }
+
+
+CROSS_HW = """\
+## Comparing across hardware (fill this in yourself)
+
+A tok/s number only compares across machines when the workload is identical.
+To add an NVIDIA / AMD / Intel / Snapdragon row to this report:
+
+1. Copy `prompts.txt` to the other machine unchanged.
+2. Serve any OpenAI-compatible endpoint there (vLLM or llama.cpp server on
+   NVIDIA/AMD, llama.cpp on Intel iGPU, Ollama on Snapdragon X laptops).
+3. Run `bench_engines.py --base-url <that server> --tag <gpu> --model <name>`
+   here or there — the script only needs HTTP, not local weights.
+4. Record: device, memory (VRAM/unified), quant, decode tok/s, TTFT s.
+
+| device | memory | quant | decode tok/s | TTFT s |
+|---|---|---|---|---|
+| _this run: see tables above_ | | | | |
+
+Never paste vendor-published numbers into this table: different prompts,
+batch sizes, and contexts make them incomparable with yours.
+"""
+
+
+def render_md(r: dict, charts_dir: str = "charts") -> str:
     info = r["machine"]
     lines = ["# MLX benchmark report", ""]
     lines += [f"- Machine: {info['chip']} · {info['cpu_count']} CPUs · "
-              f"{info['memory_gb']} GB ({info['os']})"]
+              f"{info['memory_gb']} GB ({info['os']})",
+              f"- Generated: {r['meta']['generated_at']} · "
+              f"{r['meta']['prompts']} prompts · "
+              f"{r['meta']['disk_free_gb']} GB disk free"]
     lines.append("")
     lines += ["## Models on disk", ""]
     if r["models"]:
@@ -131,11 +207,23 @@ def render_md(r: dict) -> str:
     lines.append("")
     lines += ["## bf16 vs 4-bit (Apple mlx-lm, in-process)", ""]
     if r["inprocess"]:
-        lines += ["| build | prefill tok/s | decode tok/s | peak mem GB |",
-                  "|---|---|---|---|"]
+        lines.append(f"![decode throughput]({charts_dir}/decode-tps.svg)")
+        lines.append(f"![peak memory]({charts_dir}/peak-mem.svg)")
+        lines.append("")
+        lines += ["| build | prefill tok/s | decode tok/s (mean) | "
+                  "tokens/run | peak mem GB |",
+                  "|---|---|---|---|---|"]
         for b in r["inprocess"]:
             lines.append(f"| `{b['build']}` | {b['prefill_tps']} | "
-                         f"{b['decode_tps']} | {b['peak_memory_gb']} |")
+                         f"{b['decode']['mean']} | {b['gen_tokens_mean']} | "
+                         f"{b['peak_memory_gb']} |")
+        lines += ["", "### Latency distribution (decode tok/s)", "",
+                  "| build | mean | p50 | p95 | max | n |",
+                  "|---|---|---|---|---|---|"]
+        for b in r["inprocess"]:
+            d = b["decode"]
+            lines.append(f"| `{b['build']}` | {d['mean']} | {d['p50']} | "
+                         f"{d['p95']} | {d['max']} | {d['n']} |")
     else:
         lines.append("No in-process benchmarks yet — run `uv run python bench.py`.")
     lines.append("")
@@ -164,12 +252,34 @@ def render_md(r: dict) -> str:
         lines.append("No inference transcripts yet — run "
                      "`uv run python inference_test.py`.")
     lines.append("")
+
+    lines += ["## Errors & limits", ""]
+    if r["errors"]:
+        lines.append(f"{len(r['errors'])} run(s) errored "
+                     "(excluded from means above):")
+        for e in r["errors"][:20]:
+            who = e.get("build") or f"{e.get('engine')}:{e.get('model')}"
+            lines.append(f"- `{e['file']}` {who} “{e.get('prompt')}”: "
+                         f"{e['error']}")
+        if len(r["errors"]) > 20:
+            lines.append(f"- …and {len(r['errors']) - 20} more (see JSON).")
+    else:
+        lines.append("Zero errored runs across every benchmark in this report.")
+    lines += ["",
+              "Limits of these numbers: batch size 1 (worst-case throughput); "
+              "single machine (see header); greedy decoding (temperature 0) for "
+              "engines, 0.7 for transcripts; KV-cache growth not isolated from "
+              "weights in peak memory; prompt-caching effects excluded by "
+              "fresh prompts per run.",
+              ""]
+    lines.append(CROSS_HW)
     return "\n".join(lines)
 
 
-def render_html(r: dict) -> str:
+def render_html(r: dict, svgs: dict | None = None) -> str:
     info = r["machine"]
     esc = html.escape
+    svgs = svgs or {}
     out = io.StringIO()
     out.write("<!DOCTYPE html><html><head><meta charset='utf-8'>"
               "<title>MLX benchmark report</title><style>"
@@ -178,11 +288,15 @@ def render_html(r: dict) -> str:
               "table{border-collapse:collapse;width:100%;margin:1em 0}"
               "th,td{border:1px solid #ccc;padding:.4em .6em;text-align:left}"
               "th{background:#f4f4f4}code{background:#f4f4f4;padding:0 .3em}"
-              ".note{color:#555;font-style:italic}</style></head><body>")
+              ".note{color:#555;font-style:italic}"
+              "svg{max-width:100%;height:auto}</style></head><body>")
     out.write("<h1>MLX benchmark report</h1>")
     out.write(f"<p>Machine: {esc(str(info['chip']))} · "
               f"{esc(str(info['cpu_count']))} CPUs · "
-              f"{esc(str(info['memory_gb']))} GB ({esc(str(info['os']))})</p>")
+              f"{esc(str(info['memory_gb']))} GB ({esc(str(info['os']))})<br>"
+              f"Generated: {esc(r['meta']['generated_at'])} · "
+              f"{r['meta']['prompts']} prompts · "
+              f"{r['meta']['disk_free_gb']} GB disk free</p>")
     out.write("<h2>Models on disk</h2>")
     if r["models"]:
         out.write("<ul>" + "".join(
@@ -192,17 +306,36 @@ def render_html(r: dict) -> str:
         out.write("<p>(no models downloaded yet)</p>")
     out.write("<h2>bf16 vs 4-bit (Apple mlx-lm, in-process)</h2>")
     if r["inprocess"]:
+        if svgs.get("decode-tps"):
+            out.write(svgs["decode-tps"])
+        if svgs.get("peak-mem"):
+            out.write(svgs["peak-mem"])
         out.write("<table><tr><th>build</th><th>prefill tok/s</th>"
-                  "<th>decode tok/s</th><th>peak mem GB</th></tr>")
+                  "<th>decode tok/s</th><th>tokens/run</th>"
+                  "<th>peak mem GB</th></tr>")
         for b in r["inprocess"]:
             out.write(f"<tr><td><code>{esc(b['build'])}</code></td>"
-                      f"<td>{b['prefill_tps']}</td><td>{b['decode_tps']}</td>"
+                      f"<td>{b['prefill_tps']}</td>"
+                      f"<td>{b['decode']['mean']}</td>"
+                      f"<td>{b['gen_tokens_mean']}</td>"
                       f"<td>{b['peak_memory_gb']}</td></tr>")
+        out.write("</table>")
+        out.write("<h3>Latency distribution (decode tok/s)</h3>"
+                  "<table><tr><th>build</th><th>mean</th><th>p50</th>"
+                  "<th>p95</th><th>max</th><th>n</th></tr>")
+        for b in r["inprocess"]:
+            d = b["decode"]
+            out.write(f"<tr><td><code>{esc(b['build'])}</code></td>"
+                      f"<td>{d['mean']}</td><td>{d['p50']}</td>"
+                      f"<td>{d['p95']}</td><td>{d['max']}</td>"
+                      f"<td>{d['n']}</td></tr>")
         out.write("</table>")
     else:
         out.write("<p>No in-process benchmarks yet.</p>")
     out.write("<h2>Engine race</h2>")
     if r["race"]:
+        if svgs.get("ttft"):
+            out.write(svgs["ttft"])
         out.write("<table><tr><th>engine</th><th>model served</th><th>TTFT s</th>"
                   "<th>decode rate</th></tr>")
         for e in r["race"]:
@@ -223,6 +356,26 @@ def render_html(r: dict) -> str:
             for q in r["qualitative"]) + "</ul>")
     else:
         out.write("<p>No inference transcripts yet.</p>")
+    out.write("<h2>Errors &amp; limits</h2>")
+    if r["errors"]:
+        out.write(f"<p>{len(r['errors'])} run(s) errored (excluded from "
+                  "means):</p><ul>" + "".join(
+            f"<li><code>{esc(e.get('file', ''))}</code> "
+            f"{esc(e.get('build') or e.get('model', ''))}: "
+            f"{esc(e['error'])}</li>" for e in r["errors"][:20]) + "</ul>")
+    else:
+        out.write("<p>Zero errored runs in this report.</p>")
+    out.write("<p class='note'>Limits: batch size 1; single machine; greedy "
+              "decoding for engines; KV-cache growth not isolated from weights "
+              "in peak memory.</p>")
+    out.write("<h2>Comparing across hardware</h2><p>Copy <code>prompts.txt</code> "
+              "to the other machine, serve any OpenAI-compatible endpoint "
+              "(vLLM/llama.cpp on NVIDIA/AMD, llama.cpp on Intel, Ollama on "
+              "Snapdragon X), and run <code>bench_engines.py --base-url "
+              "&lt;server&gt;</code> with the same prompts. Record device, "
+              "memory, quant, decode tok/s, TTFT. Never paste vendor-published "
+              "numbers next to yours — different workloads make them "
+              "incomparable.</p>")
     out.write("</body></html>")
     return out.getvalue()
 
@@ -236,8 +389,8 @@ def render_csv(r: dict) -> str:
     cols = ["kind", "file", "build", "engine", "model", "prompt",
             "prompt_tokens", "prompt_tps", "generation_tokens",
             "generation_tps", "peak_memory_gb", "wall_seconds", "ttft_seconds",
-            "output_chars", "chars_per_sec", "completion_tokens",
-            "tokens_per_sec"]
+            "ttft_to", "output_chars", "chars_per_sec", "completion_tokens",
+            "tokens_per_sec", "error"]
     w = csv.DictWriter(out, fieldnames=cols, extrasaction="ignore")
     w.writeheader()
     for run in r["runs"]:
@@ -271,7 +424,7 @@ def render_xlsx(r: dict, path: Path) -> None:
     for c in ws[ws.max_row]:
         c.font = bold
     for b in r["inprocess"]:
-        ws.append([b["build"], b["prefill_tps"], b["decode_tps"],
+        ws.append([b["build"], b["prefill_tps"], b["decode"]["mean"],
                    b["peak_memory_gb"]])
     ws.append([])
     ws.append(["Engine race"])
@@ -281,6 +434,25 @@ def render_xlsx(r: dict, path: Path) -> None:
     for e in r["race"]:
         ws.append([e["engine"], e["model"], e["ttft_s"], e["decode_rate"],
                    e["rate_unit"]])
+    ws.append([])
+    ws.append(["Latency distribution (decode tok/s: mean/p50/p95/max/n)"])
+    ws.append(["target", "mean", "p50", "p95", "max", "n"])
+    for c in ws[ws.max_row]:
+        c.font = bold
+    for b in r["inprocess"]:
+        d = b["decode"]
+        ws.append([b["build"], d["mean"], d["p50"], d["p95"], d["max"],
+                   d["n"]])
+    for e in r["race"]:
+        d = e["decode"]
+        ws.append([f"{e['engine']}:{e['model']}", d["mean"], d["p50"],
+                   d["p95"], d["max"], d["n"]])
+    if r["errors"]:
+        ws.append([])
+        ws.append([f"Errors: {len(r['errors'])} errored run(s), see JSON/CSV"])
+    ws.append([f"Generated {r['meta']['generated_at']} · "
+               f"{r['meta']['prompts']} prompts · "
+               f"{r['meta']['disk_free_gb']} GB disk free"])
 
     for sheet, rows in (("In-process runs",
                          [x for x in r["runs"] if x["kind"] == "inprocess"]),
@@ -303,6 +475,34 @@ def render_xlsx(r: dict, path: Path) -> None:
     wb.save(path)
 
 
+def pdf_bars(story, styles, title: str, labels: list[str],
+             values: list, unit: str) -> None:
+    """One horizontal bar chart drawn with reportlab shapes (no matplotlib)."""
+    from reportlab.graphics.shapes import Drawing, Rect, String
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Spacer
+
+    pairs = [(lb, v) for lb, v in zip(labels, values) if v is not None]
+    story.append(Paragraph(title, styles["Heading3"]))
+    if not pairs:
+        story.append(Paragraph("No data.", styles["Normal"]))
+        return
+    top = max(v for _, v in pairs)
+    W = 7.0 * inch
+    d = Drawing(W, 22 * len(pairs) + 8)
+    y = 0
+    for label, value in pairs:
+        w = max(4, (W - 2.6 * inch) * (value / top)) if top else 4
+        d.add(String(0, y + 5, (label[:32] + "…") if len(label) > 33 else label,
+                     fontSize=7))
+        d.add(Rect(2.4 * inch, y, w, 13, fillColor="#4F86C6",
+                   strokeColor="#4F86C6"))
+        d.add(String(2.4 * inch + w + 4, y + 5, f"{value} {unit}", fontSize=7))
+        y += 22
+    story.append(d)
+    story.append(Spacer(1, .1 * inch))
+
+
 def render_pdf(r: dict, path: Path) -> None:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet
@@ -316,7 +516,10 @@ def render_pdf(r: dict, path: Path) -> None:
     styles = getSampleStyleSheet()
     story = [Paragraph("MLX benchmark report", styles["Title"]),
              Paragraph(f"Machine: {info['chip']} · {info['cpu_count']} CPUs · "
-                       f"{info['memory_gb']} GB ({info['os']})",
+                       f"{info['memory_gb']} GB ({info['os']})<br/>"
+                       f"Generated: {r['meta']['generated_at']} · "
+                       f"{r['meta']['prompts']} prompts · "
+                       f"{r['meta']['disk_free_gb']} GB disk free",
                        styles["Normal"]),
              Spacer(1, .2 * inch)]
     grid = TableStyle([("GRID", (0, 0), (-1, -1), .5, "#999"),
@@ -337,11 +540,19 @@ def render_pdf(r: dict, path: Path) -> None:
     section("Models on disk", ["model", "size GB"],
             [[m["name"], m["size_gb"]] for m in r["models"]],
             "No models downloaded yet.")
+    pdf_bars(story, styles, "Decode throughput, tok/s (higher is better)",
+             [b["build"] for b in r["inprocess"]],
+             [b["decode"]["mean"] for b in r["inprocess"]], "tok/s")
     section("bf16 vs 4-bit (in-process)",
-            ["build", "prefill tok/s", "decode tok/s", "peak mem GB"],
-            [[b["build"], b["prefill_tps"], b["decode_tps"],
+            ["build", "prefill tok/s", "decode mean", "p50", "p95",
+             "tokens/run", "peak mem GB"],
+            [[b["build"], b["prefill_tps"], b["decode"]["mean"],
+              b["decode"]["p50"], b["decode"]["p95"], b["gen_tokens_mean"],
               b["peak_memory_gb"]] for b in r["inprocess"]],
             "No in-process benchmarks yet.")
+    pdf_bars(story, styles, "Time to first token, s (lower is better)",
+             [f"{e['engine']}:{e['model']}" for e in r["race"]],
+             [e["ttft_s"] for e in r["race"]], "s")
     section("Engine race", ["engine", "model", "TTFT s", "decode rate"],
             [[e["engine"], e["model"], e["ttft_s"],
               f"{e['decode_rate']} {e['rate_unit']}"] for e in r["race"]],
@@ -349,6 +560,23 @@ def render_pdf(r: dict, path: Path) -> None:
     section("Qualitative check", ["model", "prompts answered", "file"],
             [[q["model"], q["cases"], q["file"]] for q in r["qualitative"]],
             "No inference transcripts yet.")
+    if r["errors"]:
+        section("Errors (excluded from means)",
+                ["file", "target", "error"],
+                [[e.get("file", ""),
+                  e.get("build") or e.get("model", ""),
+                  str(e["error"])[:100]] for e in r["errors"][:20]],
+                "")
+    else:
+        story.append(Paragraph("Errors: zero errored runs in this report.",
+                               styles["Normal"]))
+        story.append(Spacer(1, .15 * inch))
+    story.append(Paragraph(
+        "Limits: batch size 1; single machine; greedy decoding for engines; "
+        "KV-cache growth not isolated from weights in peak memory. "
+        "Cross-hardware rule: same prompts.txt, same temperature, record "
+        "device + memory + quant — never paste vendor-published numbers "
+        "next to yours.", styles["Normal"]))
     doc.build(story)
 
 
@@ -365,11 +593,19 @@ def main() -> None:
     report = collect()
     base = ROOT / args.out
     base.parent.mkdir(parents=True, exist_ok=True)
+    # Charts live beside the reports; md references them relatively, html
+    # inlines the same SVG strings, pdf redraws the same data natively.
+    charts_dir = base.parent / "charts"
+    svgs = chart_svgs(report)
+    if {"md", "html"} & set(wanted):
+        charts_dir.mkdir(parents=True, exist_ok=True)
+        for name, svg in svgs.items():
+            (charts_dir / f"{name}.svg").write_text(svg)
     for fmt in wanted:
         if fmt == "md":
             (base.with_suffix(".md")).write_text(render_md(report))
         elif fmt == "html":
-            (base.with_suffix(".html")).write_text(render_html(report))
+            (base.with_suffix(".html")).write_text(render_html(report, svgs))
         elif fmt == "json":
             (base.with_suffix(".json")).write_text(render_json(report))
         elif fmt == "csv":

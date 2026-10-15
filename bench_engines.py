@@ -106,31 +106,55 @@ def main() -> None:
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
     runs = []
-    # A refused connection means the server isn't up — say so plainly instead
-    # of dumping a urllib traceback (README step 6 needs the server in
-    # another terminal first).
+    # Server-down check up front (warmup): a refused connection means no
+    # server is listening; a 404 means the --model name doesn't match the
+    # server's served model (mlx_lm.server wants the exact startup string).
+    # NOTE: keep messages paste-safe — no <angle-bracket> placeholders,
+    # zsh treats them as redirects.
     try:
-        for prompt in prompts:
-            stream_once(args.base_url, args.model, prompt)  # warmup, discarded
-            for _ in range(args.repeats):
-                r = stream_once(args.base_url, args.model, prompt)
-                r["prompt"] = prompt[:80]
-                runs.append(r)
+        stream_once(args.base_url, args.model, prompts[0])  # warmup, discarded
+    except urllib.error.HTTPError as e:
+        raise SystemExit(
+            f"Server at {args.base_url} answered {e.code} for model "
+            f"'{args.model}'.\n"
+            f"--model must equal the server's served name exactly:\n"
+            f"  mlx_lm.server wants its full --model path, e.g.\n"
+            f"  uv run python bench_engines.py --base-url {args.base_url} "
+            f"--model models/Qwen3-8B-mlx-4bit --tag mlx-lm"
+        )
     except urllib.error.URLError as e:
-        # NOTE: keep this message paste-safe — no <angle-bracket> placeholders,
-        # zsh treats them as redirects. Use the real default model path.
         raise SystemExit(
             f"Cannot reach a server at {args.base_url} ({e.reason}).\n"
             f"Start a server first (separate terminal), then re-run:\n"
             f"  uv run mlx_lm.server --model models/Qwen3-8B-mlx-4bit --port 8000"
         )
+    errors = 0
+    for i, prompt in enumerate(prompts):
+        if i > 0:
+            stream_once(args.base_url, args.model, prompt)  # warmup, discarded
+        for _ in range(args.repeats):
+            # Per-run errors are recorded, not fatal: one bad response (timeout,
+            # mid-run server hiccup) must not erase the runs that succeeded.
+            try:
+                r = stream_once(args.base_url, args.model, prompt)
+                r["prompt"] = prompt[:80]
+            except Exception as e:  # noqa: BLE001 — recorded verbatim below
+                errors += 1
+                r = {"prompt": prompt[:80], "error": f"{type(e).__name__}: {e}",
+                     "ttft_seconds": None, "ttft_to": None,
+                     "total_seconds": None, "output_chars": None,
+                     "chars_per_sec": None, "completion_tokens": None,
+                     "tokens_per_sec": None}
+            runs.append(r)
     out = {"engine_tag": args.tag, "base_url": args.base_url,
            "model": args.model, "repeats": args.repeats, "runs": runs}
     path = results_dir / f"engines_{args.tag}.json"
     path.write_text(json.dumps(out, indent=2))
     print(f"wrote {path}")
+    ok = sum(1 for r in runs if not r.get("error"))
     complete(f"Engine race ({args.tag})",
-             [f"{len(runs)} timed run(s) over {len(prompts)} prompt(s)",
+             [f"{ok}/{len(runs)} runs ok over {len(prompts)} prompt(s)"
+              + (f" ({errors} errored, see JSON)" if errors else ""),
               f"result: {path}"],
              started, next_step="uv run python make_report.py")
 
