@@ -23,7 +23,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from bench_engines import stream_once  # same streamed methodology as step 6
+from bench_engines import print_table, stream_once  # same methodology as step 6
 from labutil import complete, guarded
 
 ROOT = Path(__file__).resolve().parent
@@ -57,6 +57,8 @@ def main() -> None:
                     help="Comma-separated subset (default: all downloaded).")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--base-url", default="http://localhost:11434/v1")
+    ap.add_argument("--concurrency", type=int, default=1,
+                    help="Parallel in-flight requests (default: 1).")
     args = ap.parse_args()
     started = time.perf_counter()
 
@@ -74,6 +76,7 @@ def main() -> None:
     results_dir.mkdir(exist_ok=True)
     prompts = load_prompts()
     raced, skipped, wrote = [], [], []
+    gpu = None  # one snapshot for the whole race (set per model below)
     for name in wanted:
         meta = available[name]
         # Models without chat (e.g. embed/decision-only) have no completions
@@ -87,35 +90,51 @@ def main() -> None:
         print(f"Racing ollama:{name} "
               f"(runner={details.get('runner', '?')}, "
               f"size={round(meta.get('size', 0) / 1e9, 1)} GB) ...")
+        from concurrent.futures import ThreadPoolExecutor
+        from telemetry import gpu_snapshot, prime as tele_prime
+
+        tele_prime()
+        gpu = gpu_snapshot() if not raced else gpu  # one snapshot per race
         runs = []
-        errors = 0
+
+        def one_timed(prompt: str) -> dict:
+            # Per-run errors are recorded, not fatal (see bench_engines).
+            try:
+                r = stream_once(args.base_url, name, prompt)
+                r["prompt"] = prompt[:80]
+                return r
+            except Exception as e:  # noqa: BLE001 — verbatim in JSON
+                return {"prompt": prompt[:80],
+                        "error": f"{type(e).__name__}: {e}",
+                        "ttft_seconds": None, "ttft_to": None,
+                        "total_seconds": None, "output_chars": None,
+                        "chars_per_sec": None, "completion_tokens": None,
+                        "tokens_per_sec": None, "itl_mean_ms": None,
+                        "itl_p50_ms": None, "cpu_percent": None,
+                        "mem_used_gb": None, "mem_percent": None}
+
         for prompt in prompts:
             stream_once(args.base_url, name, prompt)  # warmup, discarded
-            for _ in range(args.repeats):
-                # Per-run errors are recorded, not fatal (see bench_engines).
-                try:
-                    r = stream_once(args.base_url, name, prompt)
-                    r["prompt"] = prompt[:80]
-                except Exception as e:  # noqa: BLE001 — verbatim in JSON
-                    errors += 1
-                    r = {"prompt": prompt[:80],
-                         "error": f"{type(e).__name__}: {e}",
-                         "ttft_seconds": None, "ttft_to": None,
-                         "total_seconds": None, "output_chars": None,
-                         "chars_per_sec": None, "completion_tokens": None,
-                         "tokens_per_sec": None}
-                runs.append(r)
+        jobs = [p for p in prompts for _ in range(args.repeats)]
+        t_race = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
+            runs = list(ex.map(one_timed, jobs))
+        makespan = time.perf_counter() - t_race
         out = {"engine_tag": "ollama", "base_url": args.base_url,
                "model": name, "repeats": args.repeats,
+               "concurrency": args.concurrency,
+               "makespan_s": round(makespan, 2),
                "runner": details.get("runner"),
                "size_gb": round(meta.get("size", 0) / 1e9, 1),
                "quantization": details.get("quantization_level"),
-               "runs": runs}
+               "gpu": gpu, "runs": runs}
         path = results_dir / f"engines_ollama-{safe_tag(name)}.json"
         path.write_text(json.dumps(out, indent=2))
         raced.append(name)
         wrote.append(path)
         print(f"  wrote {path}")
+        print_table("ollama", name, runs, makespan, args.concurrency,
+                    str(path))
     all_runs = [r for p in wrote for r in json.loads(p.read_text())["runs"]]
     n_err = sum(1 for r in all_runs if r.get("error"))
     details = [f"{len(raced)} model(s) raced, {len(all_runs) - n_err}/{len(all_runs)} runs ok"

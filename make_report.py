@@ -95,7 +95,10 @@ def collect() -> dict:
         d = json.loads(b.read_text())
         runs = d["runs"]
         build = Path(d["model"]).name
-        report["inprocess"].append({
+        size = next((m["size_gb"] for m in report["models"]
+                       if m["name"] == build), None)
+        decode_mean = mean(runs, "generation_tps")
+        entry = {
             "build": build, "repeats": d.get("repeats"),
             "prefill_tps": mean(runs, "prompt_tps"),
             "decode": dist(runs, "generation_tps"),
@@ -103,8 +106,15 @@ def collect() -> dict:
             "peak_memory_gb": mean(runs, "peak_memory_gb"),
             "prompt_tokens_mean": mean(runs, "prompt_tokens"),
             "gen_tokens_mean": mean(runs, "generation_tokens"),
+            "throttle": throttle_factor(runs),
             "errors": sum(1 for r in runs if r.get("error")),
-        })
+        }
+        entry.update(flop_estimates(size, build, decode_mean))
+        # Time-cost per 1M tokens at the measured rate (unit economics input;
+        # multiply by $/GPU-hour on rented hardware for dollars).
+        entry["sec_per_1m_tokens"] = (
+            round(1e6 / decode_mean, 1) if decode_mean else None)
+        report["inprocess"].append(entry)
         for r in runs:
             if r.get("error"):
                 report["errors"].append({"file": b.name, "build": build,
@@ -115,6 +125,13 @@ def collect() -> dict:
 
     for e in sorted(results.glob("engines_*.json")):
         d = json.loads(e.read_text())
+        if "runs" not in d:
+            # Sweep frontier files carry points, not runs (see below).
+            if "frontier" in d:
+                report.setdefault("frontiers", []).append({
+                    "engine": d["engine_tag"], "model": d["model"],
+                    "levels": d.get("levels"), "points": d["frontier"]})
+            continue
         runs = d["runs"]
         rate = mean(runs, "tokens_per_sec")
         unit = "tok/s" if rate is not None else "chars/s"
@@ -123,10 +140,17 @@ def collect() -> dict:
             rate = mean(runs, "chars_per_sec")
         report["race"].append({
             "engine": d["engine_tag"], "model": d["model"],
-            "repeats": d.get("repeats"), "ttft_s": mean(runs, "ttft_seconds"),
+            "repeats": d.get("repeats"),
+            "concurrency": d.get("concurrency", 1),
+            "ttft_s": mean(runs, "ttft_seconds"),
             "ttft": dist(runs, "ttft_seconds"),
+            "itl_p50_ms": dist(runs, "itl_mean_ms")["p50"],
             "decode_rate": rate, "rate_unit": unit,
             "decode": dist(runs, key),
+            "cpu_mean": mean(runs, "cpu_percent"),
+            "mem_gb_mean": mean(runs, "mem_used_gb"),
+            "throttle": throttle_factor(runs, "total_seconds"),
+            "gpu": d.get("gpu"),
             "errors": sum(1 for r in runs if r.get("error")),
         })
         for r in runs:
@@ -149,9 +173,118 @@ def collect() -> dict:
     return report
 
 
-def chart_svgs(r: dict) -> dict:
-    """Build the three report charts; keys map to charts/<name>.svg files."""
+def precision_bpp(name: str) -> float | None:
+    """Bytes per parameter from a build dirname heuristic (labeled estimate)."""
+    n = name.lower()
+    if "4bit" in n or "4-bit" in n or "q4" in n:
+        return 0.5
+    if "8bit" in n or "8-bit" in n or "fp8" in n:
+        return 1.0
+    if "bf16" in n or "fp16" in n or "f16" in n:
+        return 2.0
+    return None
+
+
+def flop_estimates(size_gb: float | None, build: str,
+                   decode_tps: float | None) -> dict:
+    """FLOPs / bandwidth / efficiency from weight bytes. Estimates, not
+    measurements: params ≈ bytes ÷ bytes-per-param; forward pass ≈
+    2 FLOP/param/token (dense; MoE does less — treat as an upper bound).
+    Achieved bandwidth = bytes re-read per second at the measured decode
+    rate; divide by your chip's published peak for utilization (MBU)."""
+    if not size_gb:
+        return {"precision_bpp": None, "est_params_b": None,
+                "est_tflop_per_token": None, "achieved_bw_gbs": None,
+                "tps_per_gb": None}
+    bpp = precision_bpp(build)
+    params = size_gb * 1e9 / bpp if bpp else None
     return {
+        "precision_bpp": bpp,
+        "est_params_b": round(params / 1e9, 1) if params else None,
+        "est_tflop_per_token": round(2 * params / 1e12, 3) if params else None,
+        "achieved_bw_gbs": (round(size_gb * decode_tps, 1)
+                            if decode_tps else None),
+        "tps_per_gb": (round(decode_tps / size_gb, 1)
+                       if decode_tps and size_gb else None),
+    }
+
+
+def throttle_factor(runs: list[dict], key: str = "wall_seconds",
+                    ) -> float | None:
+    """Late-vs-early wall-time ratio: >1.05 sustained hints thermal throttling
+    or background contention (proxy, not a sensor — see Power/Thermal)."""
+    walls = [r[key] for r in runs
+             if r.get(key) is not None and not r.get("error")]
+    if len(walls) < 4:
+        return None
+    half = len(walls) // 2
+    early = sum(walls[:half]) / half
+    late = sum(walls[half:]) / (len(walls) - half)
+    return round(late / early, 3) if early > 0 else None
+
+
+def scatter_svg(title: str, points: list[tuple],
+                xlabel: str, ylabel: str) -> str:
+    """Pareto scatter: latency (x) vs throughput (y), concurrency-labeled."""
+    W, H, pad = 640, 380, 56
+    xs = [p[0] for p in points if p[0] is not None and p[1] is not None]
+    ys = [p[1] for p in points if p[0] is not None and p[1] is not None]
+    if not xs:
+        return (f"<svg xmlns='http://www.w3.org/2000/svg' width='{W}' "
+                f"height='60'><text x='10' y='30' font-size='13' fill='#888'>"
+                f"No data for {title}</text></svg>")
+    x0, x1 = min(xs), max(xs) if max(xs) > min(xs) else min(xs) + 1
+    y1 = max(ys) * 1.1 or 1
+    sx = lambda x: pad + (W - 2 * pad) * (x - x0) / (x1 - x0)
+    sy = lambda y: H - pad - (H - 2 * pad) * (y / y1)
+    parts = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{W}' "
+             f"height='{H}' font-family='Helvetica,Arial,sans-serif'>",
+             f"<text x='10' y='22' font-size='15' font-weight='bold' "
+             f"fill='#222'>{title}</text>",
+             f"<line x1='{pad}' y1='{H - pad}' x2='{W - pad}' y2='{H - pad}' "
+             f"stroke='#999'/><line x1='{pad}' y1='{pad}' x2='{pad}' "
+             f"y2='{H - pad}' stroke='#999'/>",
+             f"<text x='{W // 2}' y='{H - 8}' font-size='12' fill='#555' "
+             f"text-anchor='middle'>{xlabel}</text>"]
+    for x, y, label in points:
+        if x is None or y is None:
+            continue
+        parts.append(
+            f"<circle cx='{sx(x):.0f}' cy='{sy(y):.0f}' r='7' "
+            f"fill='#4F86C6'/><text x='{sx(x):.0f}' y='{sy(y) - 12:.0f}' "
+            f"font-size='11' fill='#222' text-anchor='middle'>c={label}</text>")
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def triad_rows(r: dict) -> list[dict]:
+    """Quality–Cost–Precision, one row per local build.
+
+    Quality = transcript review status (human read, not a score — beware any
+    table that scores quality it never measured). Cost = time per 1M tokens
+    at the measured rate (× $/GPU-hour on rented hardware for dollars) plus
+    GB footprint. Precision = weight bits (heuristic from build name)."""
+    have_transcripts = {q["model"] for q in r["qualitative"]}
+    rows = []
+    for b in r["inprocess"]:
+        rows.append({
+            "build": b["build"],
+            "quality": (f"transcripts read ({b['build']})"
+                        if b["build"] in have_transcripts
+                        else "NOT REVIEWED — run inference_test.py"),
+            "sec_per_1m": b.get("sec_per_1m_tokens"),
+            "size_gb": next((m["size_gb"] for m in r["models"]
+                             if m["name"] == b["build"]), None),
+            "bits": b.get("precision_bpp"),
+            "decode": b["decode"]["mean"],
+            "tps_per_gb": b.get("tps_per_gb"),
+        })
+    return rows
+
+
+def chart_svgs(r: dict) -> dict:
+    """Build the report charts; keys map to charts/<name>.svg files."""
+    out = {
         "decode-tps": bar_chart(
             "Decode throughput (higher is better)",
             [b["build"] for b in r["inprocess"]],
@@ -165,6 +298,15 @@ def chart_svgs(r: dict) -> dict:
             [f"{e['engine']}:{e['model']}" for e in r["race"]],
             [e["ttft_s"] for e in r["race"]], "s"),
     }
+    for f in r.get("frontiers", []):
+        # Pareto: p50 latency (x) vs aggregate throughput (y), one dot per
+        # concurrency level — the knee is the capacity answer.
+        out[f"pareto-{f['engine']}"] = scatter_svg(
+            f"Pareto frontier: {f['engine']}:{f['model']}",
+            [(p["p50_latency_ms"], p["agg_tps"], p["concurrency"])
+             for p in f["points"]],
+            "p50 latency (ms) →", "aggregate TPS (tok/s) →")
+    return out
 
 
 CROSS_HW = """\
@@ -229,11 +371,14 @@ def render_md(r: dict, charts_dir: str = "charts") -> str:
     lines.append("")
     lines += ["## Engine race (OpenAI-compatible servers, same prompts)", ""]
     if r["race"]:
-        lines += ["| engine | model served | TTFT s | decode rate |",
-                  "|---|---|---|---|"]
+        lines += ["| engine | model served | TTFT s | ITL p50 ms | decode rate | "
+                  "CPU % | mem GB |",
+                  "|---|---|---|---|---|---|---|"]
         for e in r["race"]:
             lines.append(f"| {e['engine']} | `{e['model']}` | {e['ttft_s']} s | "
-                         f"{e['decode_rate']} {e['rate_unit']} |")
+                         f"{e['itl_p50_ms']} | "
+                         f"{e['decode_rate']} {e['rate_unit']} | "
+                         f"{e['cpu_mean']} | {e['mem_gb_mean']} |")
         lines += ["",
                   "_Methodology: same prompts, temperature 0, one warmup run "
                   "discarded per prompt, means over repeats. TTFT = "
@@ -271,6 +416,61 @@ def render_md(r: dict, charts_dir: str = "charts") -> str:
               "engines, 0.7 for transcripts; KV-cache growth not isolated from "
               "weights in peak memory; prompt-caching effects excluded by "
               "fresh prompts per run.",
+              ""]
+    if r.get("frontiers"):
+        lines += ["## Pareto frontier (throughput vs latency)", ""]
+        for f in r["frontiers"]:
+            lines.append(f"![pareto]({charts_dir}/pareto-{f['engine']}.svg)")
+            lines.append("")
+            lines += [f"### {f['engine']}:{f['model']}", "",
+                      "| concurrency | agg TPS | RPS | p50 latency ms | "
+                      "ITL p50 ms | errors |",
+                      "|---|---|---|---|---|---|"]
+            for p in f["points"]:
+                lines.append(f"| {p['concurrency']} | {p['agg_tps']} | "
+                             f"{p['rps']} | {p['p50_latency_ms']} | "
+                             f"{p['itl_p50_ms']} | {p['errors']} |")
+            lines.append("")
+        lines += ["Read it: TPS climbs with concurrency, then flattens while "
+                  "latency climbs — the knee is the capacity answer. Past it, "
+                  "extra load buys throughput with latency (contention).", ""]
+    lines += ["## Quality–Cost–Precision triad", "",
+              "Quality is a human read of transcripts, never a computed score. "
+              "Cost is time per 1M tokens at the measured rate (× $/GPU-hour "
+              "for dollars). Precision is weight bits. Move one corner and "
+              "the other two move:", "",
+              "| build | quality | sec/1M tok | size GB | bits | "
+              "decode tok/s | tok/s/GB |",
+              "|---|---|---|---|---|---|---|"]
+    for t in triad_rows(r):
+        lines.append(f"| `{t['build']}` | {t['quality']} | {t['sec_per_1m']} | "
+                     f"{t['size_gb']} | {t['bits']} | {t['decode']} | "
+                     f"{t['tps_per_gb']} |")
+    lines += ["",
+              "FLOPs/analytics (estimates, dense-model upper bounds):"]
+    for b in r["inprocess"]:
+        lines.append(f"- `{b['build']}`: ~{b.get('est_params_b')}B params, "
+                     f"~{b.get('est_tflop_per_token')} TFLOP/token, "
+                     f"~{b.get('achieved_bw_gbs')} GB/s achieved bandwidth "
+                     f"(÷ chip peak = utilization).")
+    lines += ["",
+              "## Power / Thermal vs Performance", "",
+              "Throttle factor = late-run vs early-run wall time (>1.05 hints "
+              "thermal throttling or background contention — a proxy, not a "
+              "sensor):"]
+    for b in r["inprocess"]:
+        lines.append(f"- `{b['build']}`: throttle ×{b.get('throttle')}")
+    for e in r["race"]:
+        gpu = e.get("gpu") or {}
+        g = (f"{gpu.get('power_w')} W" if gpu.get("power_w") is not None
+             else gpu.get("unavailable", "no GPU telemetry"))
+        lines.append(f"- {e['engine']}:{e['model']}: throttle "
+                     f"×{e.get('throttle')}, GPU: {g}")
+    lines += ["",
+              "To measure power properly: one `sudo powermetrics` run during "
+              "a race (GPU power + thermal pressure need root on macOS). "
+              "Without it, watts-per-token and tokens/joule stay blank — "
+              "this report leaves them blank rather than inventing them.",
               ""]
     lines.append(CROSS_HW)
     return "\n".join(lines)
@@ -337,12 +537,14 @@ def render_html(r: dict, svgs: dict | None = None) -> str:
         if svgs.get("ttft"):
             out.write(svgs["ttft"])
         out.write("<table><tr><th>engine</th><th>model served</th><th>TTFT s</th>"
-                  "<th>decode rate</th></tr>")
+                  "<th>ITL p50 ms</th><th>decode rate</th>"
+                  "<th>CPU %</th><th>mem GB</th></tr>")
         for e in r["race"]:
             out.write(f"<tr><td>{esc(e['engine'])}</td>"
                       f"<td><code>{esc(e['model'])}</code></td>"
-                      f"<td>{e['ttft_s']}</td>"
-                      f"<td>{e['decode_rate']} {e['rate_unit']}</td></tr>")
+                      f"<td>{e['ttft_s']}</td><td>{e['itl_p50_ms']}</td>"
+                      f"<td>{e['decode_rate']} {e['rate_unit']}</td>"
+                      f"<td>{e['cpu_mean']}</td><td>{e['mem_gb_mean']}</td></tr>")
         out.write("</table><p class='note'>Methodology: same prompts, "
                   "temperature 0, one warmup run discarded per prompt, means "
                   "over repeats.</p>")
@@ -368,6 +570,46 @@ def render_html(r: dict, svgs: dict | None = None) -> str:
     out.write("<p class='note'>Limits: batch size 1; single machine; greedy "
               "decoding for engines; KV-cache growth not isolated from weights "
               "in peak memory.</p>")
+    if r.get("frontiers"):
+        out.write("<h2>Pareto frontier (throughput vs latency)</h2>")
+        for f in r["frontiers"]:
+            key = f"pareto-{f['engine']}"
+            if svgs.get(key):
+                out.write(svgs[key])
+            out.write(f"<h3>{esc(f['engine'])}:{esc(f['model'])}</h3>"
+                      "<table><tr><th>concurrency</th><th>agg TPS</th>"
+                      "<th>RPS</th><th>p50 latency ms</th><th>ITL p50 ms</th>"
+                      "<th>errors</th></tr>")
+            for p in f["points"]:
+                out.write(f"<tr><td>{p['concurrency']}</td>"
+                          f"<td>{p['agg_tps']}</td><td>{p['rps']}</td>"
+                          f"<td>{p['p50_latency_ms']}</td>"
+                          f"<td>{p['itl_p50_ms']}</td><td>{p['errors']}</td></tr>")
+            out.write("</table>")
+    out.write("<h2>Quality–Cost–Precision triad</h2><p class='note'>Quality is "
+              "a human read of transcripts, never a computed score. Cost is "
+              "time per 1M tokens (× $/GPU-hour for dollars).</p>"
+              "<table><tr><th>build</th><th>quality</th><th>sec/1M tok</th>"
+              "<th>size GB</th><th>bits</th><th>decode tok/s</th>"
+              "<th>tok/s/GB</th></tr>")
+    for t in triad_rows(r):
+        out.write(f"<tr><td><code>{esc(t['build'])}</code></td>"
+                  f"<td>{esc(t['quality'])}</td><td>{t['sec_per_1m']}</td>"
+                  f"<td>{t['size_gb']}</td><td>{t['bits']}</td>"
+                  f"<td>{t['decode']}</td><td>{t['tps_per_gb']}</td></tr>")
+    out.write("</table><h2>Power / Thermal vs Performance</h2>"
+              "<p class='note'>Throttle = late vs early wall time; >1.05 hints "
+              "throttling or contention (proxy, not sensor).</p><ul>")
+    for b in r["inprocess"]:
+        out.write(f"<li><code>{esc(b['build'])}</code>: throttle "
+                  f"×{b.get('throttle')}</li>")
+    for e in r["race"]:
+        gpu = e.get("gpu") or {}
+        g = (f"{gpu.get('power_w')} W" if gpu.get("power_w") is not None
+             else gpu.get("unavailable", "no GPU telemetry"))
+        out.write(f"<li>{esc(e['engine'])}:{esc(e['model'])}: throttle "
+                  f"×{e.get('throttle')}, GPU: {esc(g)}</li>")
+    out.write("</ul>")
     out.write("<h2>Comparing across hardware</h2><p>Copy <code>prompts.txt</code> "
               "to the other machine, serve any OpenAI-compatible endpoint "
               "(vLLM/llama.cpp on NVIDIA/AMD, llama.cpp on Intel, Ollama on "
@@ -428,12 +670,14 @@ def render_xlsx(r: dict, path: Path) -> None:
                    b["peak_memory_gb"]])
     ws.append([])
     ws.append(["Engine race"])
-    ws.append(["engine", "model served", "TTFT s", "decode rate", "unit"])
+    ws.append(["engine", "model served", "TTFT s", "ITL p50 ms", "decode rate",
+               "unit", "CPU %", "mem GB"])
     for c in ws[ws.max_row]:
         c.font = bold
     for e in r["race"]:
-        ws.append([e["engine"], e["model"], e["ttft_s"], e["decode_rate"],
-                   e["rate_unit"]])
+        ws.append([e["engine"], e["model"], e["ttft_s"], e["itl_p50_ms"],
+                   e["decode_rate"], e["rate_unit"], e["cpu_mean"],
+                   e["mem_gb_mean"]])
     ws.append([])
     ws.append(["Latency distribution (decode tok/s: mean/p50/p95/max/n)"])
     ws.append(["target", "mean", "p50", "p95", "max", "n"])
@@ -471,6 +715,24 @@ def render_xlsx(r: dict, path: Path) -> None:
                        for v in (row.get(c) for c in cols)])
         w2.freeze_panes = "A2"
         w2.auto_filter.ref = w2.dimensions
+
+    for f in r.get("frontiers", []):
+        w3 = wb.create_sheet(f"Pareto {f['engine']}"[:31])
+        w3.append(["concurrency", "agg TPS", "RPS", "p50 latency ms",
+                   "ITL p50 ms", "errors"])
+        for c in w3[1]:
+            c.font = bold
+        for p in f["points"]:
+            w3.append([p["concurrency"], p["agg_tps"], p["rps"],
+                       p["p50_latency_ms"], p["itl_p50_ms"], p["errors"]])
+    wt = wb.create_sheet("Triad")
+    wt.append(["build", "quality", "sec/1M tok", "size GB", "bits",
+               "decode tok/s", "tok/s/GB"])
+    for c in wt[1]:
+        c.font = bold
+    for t in triad_rows(r):
+        wt.append([t["build"], t["quality"], t["sec_per_1m"], t["size_gb"],
+                   t["bits"], t["decode"], t["tps_per_gb"]])
 
     wb.save(path)
 
@@ -553,9 +815,12 @@ def render_pdf(r: dict, path: Path) -> None:
     pdf_bars(story, styles, "Time to first token, s (lower is better)",
              [f"{e['engine']}:{e['model']}" for e in r["race"]],
              [e["ttft_s"] for e in r["race"]], "s")
-    section("Engine race", ["engine", "model", "TTFT s", "decode rate"],
-            [[e["engine"], e["model"], e["ttft_s"],
-              f"{e['decode_rate']} {e['rate_unit']}"] for e in r["race"]],
+    section("Engine race",
+            ["engine", "model", "TTFT s", "ITL p50 ms", "decode rate",
+             "CPU %", "mem GB"],
+            [[e["engine"], e["model"], e["ttft_s"], e["itl_p50_ms"],
+              f"{e['decode_rate']} {e['rate_unit']}", e["cpu_mean"],
+              e["mem_gb_mean"]] for e in r["race"]],
             "No engine race yet.")
     section("Qualitative check", ["model", "prompts answered", "file"],
             [[q["model"], q["cases"], q["file"]] for q in r["qualitative"]],
@@ -571,6 +836,29 @@ def render_pdf(r: dict, path: Path) -> None:
         story.append(Paragraph("Errors: zero errored runs in this report.",
                                styles["Normal"]))
         story.append(Spacer(1, .15 * inch))
+    for f in r.get("frontiers", []):
+        section(f"Pareto frontier: {f['engine']}:{f['model']}",
+                ["concurrency", "agg TPS", "RPS", "p50 latency ms",
+                 "ITL p50 ms", "errors"],
+                [[p["concurrency"], p["agg_tps"], p["rps"],
+                  p["p50_latency_ms"], p["itl_p50_ms"], p["errors"]]
+                 for p in f["points"]],
+                "No sweep run.")
+    section("Quality–Cost–Precision triad",
+            ["build", "quality", "sec/1M", "GB", "bits", "tok/s",
+             "tok/s/GB"],
+            [[t["build"], t["quality"], t["sec_per_1m"], t["size_gb"],
+              t["bits"], t["decode"], t["tps_per_gb"]]
+             for t in triad_rows(r)],
+            "No local benchmarks yet.")
+    story.append(Paragraph("Power / Thermal vs Performance", styles["Heading2"]))
+    story.append(Paragraph("Throttle = late vs early wall time; >1.05 hints "
+                           "throttling or contention (proxy, not sensor). "
+                           "True watts need sudo powermetrics.", styles["Normal"]))
+    for b in r["inprocess"]:
+        story.append(Paragraph(f"{b['build']}: throttle ×{b.get('throttle')}",
+                               styles["Normal"]))
+    story.append(Spacer(1, .15 * inch))
     story.append(Paragraph(
         "Limits: batch size 1; single machine; greedy decoding for engines; "
         "KV-cache growth not isolated from weights in peak memory. "

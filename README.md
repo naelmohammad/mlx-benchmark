@@ -186,7 +186,14 @@ rapid-mlx serve qwen3.5-9b-4bit
 # "using 8001 instead" — match --base-url to the port it actually uses.
 uv run python bench_engines.py --base-url http://localhost:8001/v1 \
   --model "qwen3.5-9b-4bit" --tag rapid-mlx
+# Pareto sweep (throughput-vs-latency frontier across load levels):
+uv run python bench_engines.py --base-url http://localhost:8001/v1 \
+  --model "qwen3.5-9b-4bit" --tag rapid-mlx-sweep --repeats 1 --sweep 1,2,4
 ```
+
+Console prints an aiperf-style table per race (TTFT / ITL / request latency /
+token throughput with avg·min·max·p99·p90·p50·std); `--concurrency N` overlaps
+requests to measure real contention.
 
 Terminal 4 — race your already-downloaded Ollama models (no setup beyond
 `ollama serve`, which the desktop app also provides):

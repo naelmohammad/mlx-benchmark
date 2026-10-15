@@ -133,6 +133,38 @@ Why decode dominates: a chat reply spends ~5% of its time on the prompt and
 ~95% generating, one token at a time. Decode tok/s is therefore the headline
 number for interactive use; TTFT is the headline for perceived snappiness.
 
+The full metric vocabulary (all four in every race table, aiperf-style):
+
+- **TTFT** — request sent → first token. Interactive latency signal.
+- **ITL (inter-token latency)** — gaps between successive tokens; high ITL
+  with healthy TTFT means decode is struggling (bandwidth, contention).
+  **TPOT** is the same cost per token in ms (1000 ÷ TPS).
+- **E2EL (end-to-end latency)** — TTFT + full generation; the request's total.
+- **TPS (token throughput)** — per-run tok/s, plus aggregate TPS (all tokens
+  ÷ wall time) under concurrency for capacity planning.
+- **RPS (request throughput)** — requests ÷ wall time; what a server survives.
+
+**Pareto frontier:** race concurrency 1, 2, 4… and plot aggregate TPS vs p50
+latency (`--sweep 1,2,4`). TPS climbs, flattens (saturation), latency climbs
+— the knee is the capacity answer. Past it, load buys throughput with
+latency: that tradeoff curve *is* contention, measured.
+
+**FLOPs / bandwidth / efficiency:** forward pass ≈ 2 FLOP per param per token
+(dense; MoE less). Decode re-reads all weights per token, so achieved
+bandwidth ≈ model bytes × tok/s — divide by the chip's published peak for
+utilization (MBU). Efficiency = tok/s per GB footprint. The report computes
+all three from your measured rate; they are estimates, labeled as such.
+
+**Quality–Cost–Precision triad:** quality (human-read transcripts, never a
+computed score) vs cost (time per 1M tokens; × $/GPU-hour for dollars) vs
+precision (weight bits). Improving one corner moves the other two — the triad
+table makes the trade explicit per build.
+
+**Power / Thermal vs Performance:** sustained load heats the chip, clocks
+drop, late runs slow down. The report's throttle factor (late vs early wall
+time) is a proxy, not a sensor; true watts need `sudo powermetrics`. Tokens
+per joule stays blank until measured — blank beats invented.
+
 *Where:* `bench.py` reports prompt_tps (prefill) and generation_tps (decode)
 separately; `bench_engines.py` measures TTFT over streamed SSE.
 
