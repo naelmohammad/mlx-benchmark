@@ -14,7 +14,11 @@ download size; 4-bit MLX is roughly a quarter of that.
 | Alibaba (Qwen) | Qwen3.6-35B-A3B (MoE) | `Qwen/Qwen3.6-35B-A3B` | ~70 GB | Sweet spot for this machine; convert needs ~70 GB free |
 | Alibaba (Qwen) | Qwen3-Coder-30B-A3B | `Qwen/Qwen3-Coder-30B-A3B` | ~60 GB | Gated — `huggingface-cli login` first; best open coding weights |
 | Google | Gemma 3 27B IT | `google/gemma-3-27b-it` | ~54 GB | Gated — accept license + login; strong all-rounder |
+| Google | Gemma 4 26B-A4B IT (MoE) | `google/gemma-4-26B-A4B-it` | ~52 GB | 2026 gen; only ~4B params active — fast; login if asked |
+| Google | Gemma 4 31B IT | `google/gemma-4-31B-it` | ~62 GB | 2026 gen dense; best quality-per-GB in its class; login if asked |
 | Meta | Llama 3.3 70B Instruct | `meta-llama/Llama-3.3-70B-Instruct` | ~140 GB | Gated; fits 64 GB only at 4-bit (~40 GB), tight |
+| Meta | Muse Glimmer 30B | `meta-models/Muse-Glimmer-30B` | ~60 GB | Apache 2.0; distilled from Muse Spark for local agents; 4-bit ≈ 18–20 GB |
+| Meta | Muse Spark 1.x | — | — | **Not downloadable** — closed weights, API-only (`api.meta.ai/v1`); use Glimmer above for local runs |
 | DeepSeek | R1-Distill-Qwen-32B | `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` | ~64 GB | Reasoning traces; weak at tool calling — benchmark, don't agent |
 | OpenAI | gpt-oss-20b | `openai/gpt-oss-20b` | ~40 GB | Apache 2.0, built for agents/tool use |
 | Alibaba (older) | Qwen2.5-32B Instruct | `Qwen/Qwen2.5-32B-Instruct` | ~64 GB | Battle-tested baseline to compare newer models against |
@@ -60,6 +64,7 @@ data point: compare *their* quant against *yours*.
 | Qwen3.8-27B 4-bit | `mlx-community/Qwen3.8-27B-4bit` |
 | Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
 | Llama-3.3-70B 4-bit | `mlx-community/Llama-3.3-70B-Instruct-4bit` |
+| Muse-Glimmer-30B 4-bit | `mlx-community/Muse-Glimmer-30B-4bit` |
 
 ```bash
 uv run huggingface-cli download <PORT_ID> --local-dir "models/<name>-mlx-4bit"
