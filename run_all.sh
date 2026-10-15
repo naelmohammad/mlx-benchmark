@@ -21,7 +21,7 @@ uv venv --python 3.12 2>/dev/null || true
 uv sync
 
 echo "==> [1/6] download $MODEL_ID"
-uv run huggingface-cli download "$MODEL_ID" --local-dir "$HF_DIR"
+uv run hf download "$MODEL_ID" --local-dir "$HF_DIR"
 
 echo "==> [2/6] convert to MLX (bf16)"
 uv run mlx_lm.convert --hf-path "$HF_DIR" --mlx-path "$BF16_DIR"

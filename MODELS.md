@@ -35,10 +35,10 @@ Then either export it per session or log in persistently:
 
 ```bash
 export HF_TOKEN="hf_..."
-uv run huggingface-cli download <HF_ID> --local-dir "models/<name>-hf"
+uv run hf download <HF_ID> --local-dir "models/<name>-hf"
 # or persist login instead of exporting each time:
-uv run huggingface-cli login                 # interactive paste
-uv run huggingface-cli login --token "$HF_TOKEN"   # non-interactive
+uv run hf auth login                 # interactive paste
+uv run hf auth login --token "$HF_TOKEN"   # non-interactive
 ```
 
 ## 2. Catalog — source weights by family
@@ -124,7 +124,7 @@ but you gain a second data point: *their* quant vs *yours*.
 | Muse-Glimmer-30B 4-bit | `mlx-community/Muse-Glimmer-30B-4bit` |
 
 ```bash
-uv run huggingface-cli download <PORT_ID> --local-dir "models/<name>-mlx-4bit"
+uv run hf download <PORT_ID> --local-dir "models/<name>-mlx-4bit"
 uv run python bench.py --model "models/<name>-mlx-4bit"
 ```
 
@@ -178,7 +178,7 @@ uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
 Or A/B your quant against the community's (~20 GB, straight to step 4):
 
 ```bash
-uv run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit \
+uv run hf download mlx-community/Qwen3.5-35B-A3B-4bit \
   --local-dir models/Qwen3.5-35B-A3B-mlx-4bit-community
 uv run python bench.py --model models/Qwen3.5-35B-A3B-mlx-4bit-community
 ```
@@ -257,7 +257,7 @@ flags for threads, batch, cache, quant:
 
 ```bash
 brew install llama.cpp
-uv run huggingface-cli download ggml-org/gpt-oss-20b-GGUF \
+uv run hf download ggml-org/gpt-oss-20b-GGUF \
   --include "*.Q4_K_M.gguf" --local-dir models/gguf
 llama-server -m models/gguf/*.gguf -c 8192 --port 8001
 ```

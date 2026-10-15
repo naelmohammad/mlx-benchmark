@@ -47,7 +47,7 @@ where to learn more.
 - [ ] Weights downloaded to `models/`
 
 ```bash
-uv run huggingface-cli download "$MODEL_ID" --local-dir "models/$(basename $MODEL_ID)-hf"
+uv run hf download "${MODEL_ID:-Qwen/Qwen3-8B}" --local-dir "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-hf"
 # default MODEL_ID=Qwen/Qwen3-8B — try MODEL_ID=Qwen/Qwen3-30B-A3B for bigger
 ```
 
@@ -63,7 +63,7 @@ shrinks. Other models, gated-model login, and pre-quantized shortcuts:
 and jump to step 4:
 
 ```bash
-uv run huggingface-cli download mlx-community/Qwen3-8B-4bit --local-dir models/Qwen3-8B-mlx-4bit
+uv run hf download mlx-community/Qwen3-8B-4bit --local-dir models/Qwen3-8B-mlx-4bit
 ```
 
 </details>
@@ -74,8 +74,8 @@ uv run huggingface-cli download mlx-community/Qwen3-8B-4bit --local-dir models/Q
 
 ```bash
 uv run mlx_lm.convert \
-  --hf-path "models/$(basename $MODEL_ID)-hf" \
-  --mlx-path "models/$(basename $MODEL_ID)-mlx-bf16"
+  --hf-path "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-hf" \
+  --mlx-path "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-bf16"
 ```
 
 <details>
@@ -93,8 +93,8 @@ in step 3. Compare: `du -sh models/*-hf models/*-bf16`.
 
 ```bash
 uv run mlx_lm.convert \
-  --hf-path "models/$(basename $MODEL_ID)-mlx-bf16" \
-  --mlx-path "models/$(basename $MODEL_ID)-mlx-4bit" \
+  --hf-path "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-bf16" \
+  --mlx-path "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" \
   -q --q-bits 4
 ```
 
@@ -114,7 +114,7 @@ Background: [CONCEPTS.md](CONCEPTS.md#weights-formats-and-quantization).
 - [ ] Full transcripts saved and skimmed (`results/inference_*.json`)
 
 ```bash
-uv run mlx_lm.generate --model "models/$(basename $MODEL_ID)-mlx-4bit" \
+uv run mlx_lm.generate --model "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" \
   --prompt "Explain quantization in one paragraph." --max-tokens 150
 uv run python inference_test.py   # every prompt in prompts.txt, bf16 vs 4-bit
 ```
@@ -158,14 +158,14 @@ overhead, and now you know its name.
 Terminal 1 — serve your 4-bit build with Apple's server:
 
 ```bash
-uv run mlx_lm.server --model "models/$(basename $MODEL_ID)-mlx-4bit" --port 8000
+uv run mlx_lm.server --model "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" --port 8000
 ```
 
 Terminal 2 — benchmark it (same prompts, temperature 0 for identical work):
 
 ```bash
 uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
-  --model "$(basename $MODEL_ID)-mlx-4bit" --tag mlx-lm
+  --model "$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" --tag mlx-lm
 ```
 
 Terminal 3 — serve Rapid-MLX (install once: `brew install rapid-mlx`), then race it:
@@ -216,7 +216,7 @@ Results are yours and gitignored (`results/*.json`, `models/`). Commit
 <summary><code>HF_TOKEN</code> / 401 / 403 errors on download</summary>
 
 Export the token (`export HF_TOKEN="hf_..."`) and log in:
-`uv run huggingface-cli login --token "$HF_TOKEN"`. Gated models (Llama,
+`uv run hf auth login --token "$HF_TOKEN"`. Gated models (Llama,
 Gemma, Qwen-Coder) also need the license accepted on their HF page. Details:
 [MODELS.md](MODELS.md).
 
