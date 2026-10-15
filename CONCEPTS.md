@@ -164,6 +164,77 @@ serving numbers are different things (README step 6).
 | 6. Engine race | Same prompts vs mlx-lm and Rapid-MLX servers | Test vendor claims on your hardware, your weights |
 | 7. Report | Merge JSON into REPORT.md | A benchmark you can't re-read is a benchmark you didn't run |
 
+## Hardware factors: what actually limits you
+
+Your benchmark numbers are the product of a whole stack. When a number
+surprises you, the cause is almost always one of these.
+
+**GPU (the workhorse).** Does the parallel math — the big matrix multiplies
+of prefill and attention. More cores help prefill and training; decode (one
+token at a time) barely uses them, which is why a "faster GPU" alone often
+disappoints on chat speed. Your M5 Max GPU also carries per-core Neural
+Accelerators (added in the M5 generation) that speed specific AI ops.
+
+**CPU (the orchestrator).** Runs the Python loop, tokenization, sampling,
+networking, and the server itself. A slow or oversubscribed CPU shows up as
+jittery inter-token latency, not low average tok/s. Rule of thumb: if tok/s
+is fine but streaming stutters, suspect the CPU side.
+
+**Memory capacity (the ceiling).** Weights + KV cache + framework overhead must
+fit in unified memory or nothing runs. Budget it explicitly:
+weights (params × bytes-per-param) + KV cache (grows with context × layers) +
+~2–4 GB for macOS, the Python process, and Metal buffers. On your 64 GB Mac
+that means roughly: 30B models comfortable at 4-bit, 70B possible but tight,
+and long-context sessions can OOM from cache growth while weights fit fine.
+
+**Memory bandwidth (the speed limit).** Decode reads every weight once per
+token, so decode tok/s ≈ bandwidth ÷ model-bytes. This is why 4-bit is ~2–4×
+faster than bf16 and why Apple Silicon (hundreds of GB/s) beats machines with
+bigger GPUs but narrower buses. Check your chip's published bandwidth, then
+divide: predicted tok/s ≈ bandwidth ÷ weight-size is usually within 30% of
+measured — a great sanity check on your benchmark.
+
+**Caches (the hidden accelerators).** Three layers, smallest-first: GPU
+registers/shared memory (per-operation, handled by kernels), system-level
+cache on the SoC (shared by CPU/GPU, why unified memory is efficient), and
+the software KV cache (above). You don't manage the first two; you observe
+them as "why is the second run of the same prompt faster" alongside warmup.
+
+**Storage (the waiting room).** SSD speed only matters at load time (model
+weights streaming into memory) and when memory-mapping huge models. It never
+affects tok/s once running. What matters is *capacity*: keep 2–3× the model
+size free (HF download + bf16 + 4-bit coexist during this lab). NVMe on modern
+Macs loads a 16 GB model in seconds — a non-issue you can verify with
+`time` around step 1 vs step 5.
+
+**Overhead (the tax).** Every layer takes a cut: Python interpreter and
+framework dispatch per token, Metal kernel-launch latency, server HTTP/SSE
+framing, tokenizer encode/decode, and chat-template formatting. Individually
+microseconds; collectively they set the floor for TTFT and cap small-model
+speed (a 1B model won't hit its theoretical tok/s — overhead dominates, not
+bandwidth). In-process `bench.py` vs `bench_engines.py` on the same weights
+shows you the server overhead directly.
+
+**OS factors (macOS specifics).** Unified-memory pressure triggers compression
+and swapping — both cliff-edges: performance falls off a cliff past ~85–90%
+memory pressure, so leave headroom. Background apps (browsers, Electron)
+steal bandwidth, not just capacity — close them for clean numbers. Thermal
+throttling on fanless machines (not your Studio) downclocks sustained runs;
+if late repeats are slower than early ones, suspect heat. Low Power Mode
+caps clocks entirely — never benchmark in it.
+
+**Other limitations to know.** Context length trades against speed and
+memory (KV cache grows per token — doubling context roughly doubles cache).
+Batch size 1 (this lab) is the worst case for throughput; servers gain by
+batching. Power draw: full-tilt inference on battery drains fast and may
+throttle; benchmark plugged in. And reproducibility: close apps, fix
+temperature at 0 for races, report chip/RAM/runs alongside numbers — a tok/s
+without its conditions is trivia.
+
+*Try it:* predict your 4-bit decode tok/s from bandwidth ÷ weight size before
+running `bench.py`, then compare. The gap between prediction and measurement
+is the sum of every overhead above — now you know its name.
+
 ## Further reading (in order)
 
 1. Your own `REPORT.md` after a full run — your numbers beat any article.
