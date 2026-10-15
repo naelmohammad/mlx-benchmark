@@ -36,8 +36,15 @@ which avoids anonymous rate limits, and gated models refuse without it:
 
 ```bash
 export HF_TOKEN="hf_..."
-uv run huggingface-cli login --token "$HF_TOKEN"   # persists it for CLI use
 uv run huggingface-cli download <HF_ID> --local-dir "models/<name>-hf"
+```
+
+Or log in from the CLI instead of exporting the variable each time —
+either form persists the token for subsequent commands:
+
+```bash
+uv run huggingface-cli login                 # interactive: paste token when asked
+uv run huggingface-cli login --token "$HF_TOKEN"   # non-interactive equivalent
 ```
 
 ## 2. Shortcut — pre-quantized MLX ports (skip steps 2–3)
