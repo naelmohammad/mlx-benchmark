@@ -168,11 +168,17 @@ uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
   --model "$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" --tag mlx-lm
 ```
 
-Terminal 3 — serve Rapid-MLX (install once: `brew install rapid-mlx`), then race it:
+Terminal 3 — serve Rapid-MLX (install once: `brew install rapid-mlx`).
+`serve` blocks, so run the bench command in a *separate* terminal:
 
 ```bash
 rapid-mlx serve qwen3.5-9b-4bit
-uv run python bench_engines.py --base-url http://localhost:8000/v1 \
+```
+
+```bash
+# ⚠️ if port 8000 is taken (mlx_lm.server still up), rapid-mlx reports
+# "using 8001 instead" — match --base-url to the port it actually uses.
+uv run python bench_engines.py --base-url http://localhost:8001/v1 \
   --model "qwen3.5-9b-4bit" --tag rapid-mlx
 ```
 
