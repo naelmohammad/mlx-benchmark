@@ -165,7 +165,9 @@ Terminal 2 — benchmark it (same prompts, temperature 0 for identical work):
 
 ```bash
 uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
-  --model "$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" --tag mlx-lm
+  --model "models/$(basename ${MODEL_ID:-Qwen/Qwen3-8B})-mlx-4bit" --tag mlx-lm
+# ^ must match the server's --model string EXACTLY (full path, not basename):
+# mlx_lm.server routes by request model name and 404s anything else.
 ```
 
 Terminal 3 — serve Rapid-MLX (install once: `brew install rapid-mlx`).
