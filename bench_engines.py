@@ -70,7 +70,10 @@ def stream_once(base_url: str, model: str, prompt: str) -> dict:
             # content first: TTFT marks the first output of either kind, and
             # ttft_to records which, so cross-engine numbers stay honest.
             text = delta.get("content") or ""
-            think = delta.get("reasoning") or ""
+            # Reasoning field names differ per server: Ollama uses
+            # `reasoning`, llama.cpp uses `reasoning_content`.
+            think = (delta.get("reasoning")
+                     or delta.get("reasoning_content") or "")
             if text or think:
                 # ITL is measured per output-bearing chunk — an approximation
                 # of per-token gaps (servers usually stream token-per-chunk).
@@ -145,14 +148,19 @@ def print_table(tag: str, model: str, runs: list[dict], makespan: float,
     for h in ("avg", "min", "max", "p99", "p90", "p50", "std"):
         table.add_column(h, justify="right")
     # The core four: TTFT, ITL, request latency, output token throughput.
+    # Comprehensions filter None first — col_stats must never see it.
     table.add_row("Time to First Token (ms)",
-                  *col_stats([r["ttft_seconds"] * 1000 for r in ok]))
+                  *col_stats([(r["ttft_seconds"] * 1000) for r in ok
+                              if r["ttft_seconds"] is not None]))
     table.add_row("Inter-Token Latency (ms)",
-                  *col_stats([r["itl_mean_ms"] for r in ok]))
+                  *col_stats([r["itl_mean_ms"] for r in ok
+                              if r["itl_mean_ms"] is not None]))
     table.add_row("Request Latency (ms)",
-                  *col_stats([r["total_seconds"] * 1000 for r in ok]))
+                  *col_stats([(r["total_seconds"] * 1000) for r in ok
+                              if r["total_seconds"] is not None]))
     table.add_row("Output Token Throughput (tokens/sec)",
-                  *col_stats([r["tokens_per_sec"] for r in ok]))
+                  *col_stats([r["tokens_per_sec"] for r in ok
+                              if r["tokens_per_sec"] is not None]))
     n = len(ok)
     tot_tok = sum(r["completion_tokens"] or 0 for r in ok)
     agg = f"{(tot_tok / makespan):,.2f}" if makespan > 0 and n else "N/A"

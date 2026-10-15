@@ -195,7 +195,23 @@ Console prints an aiperf-style table per race (TTFT / ITL / request latency /
 token throughput with avg·min·max·p99·p90·p50·std); `--concurrency N` overlaps
 requests to measure real contention.
 
-Terminal 4 — race your already-downloaded Ollama models (no setup beyond
+Terminal 4 — race llama.cpp (bare engine, explicit knobs):
+
+```bash
+llama-server -m models/gguf/Qwen3-8B-Q4_K_M.gguf -c 4096 --port 8001
+uv run python bench_llamacpp.py --base-url http://127.0.0.1:8001/v1 \
+  --model Qwen3-8B-Q4_K_M.gguf
+# discover: uv run python bench_llamacpp.py --list
+```
+
+Terminal 5 — race Rapid-MLX by alias:
+
+```bash
+rapid-mlx serve qwen3.5-9b-4bit   # :8001 if :8000 is taken
+uv run python bench_rapid.py --alias qwen3.5-9b-4bit --port 8012
+```
+
+Terminal 6 — race your already-downloaded Ollama models (no setup beyond
 `ollama serve`, which the desktop app also provides):
 
 ```bash
@@ -255,6 +271,9 @@ Results are yours and gitignored (`results/*.json`, `models/`). Commit
 | `inference_test.py` | 4 | Quality gate transcripts, bf16 vs 4-bit |
 | `bench_engines.py` | 6 | Server-vs-server race over OpenAI SSE; shared by Ollama racer |
 | `bench_ollama.py` | 6 | Races everything in `ollama list`; skips non-chat models |
+| `bench_llamacpp.py` | 6 | GGUF discovery (`--list`) + llama-server race, tagged `llama-cpp` |
+| `bench_rapid.py` | 6 | Rapid-MLX alias race (+ `--sweep`), tagged `rapid-mlx` |
+| `import_aiperf.py` | 6 | Imports aiperf JSON exports as labeled aggregate rows |
 | `make_report.py` | 7 | Merges JSON into md/html/pdf/xlsx/json/csv (`--format`) |
 | `labutil.py` | all | Completion summaries + graceful Ctrl+C (exit 130, keeps partials) |
 | `prompts.txt` | 4–6 | The shared prompt set — edit to race your own workload |

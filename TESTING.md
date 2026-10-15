@@ -20,6 +20,9 @@ where results go, and when to run what.
 | In-process benchmark | `bench.py` | prefill tok/s, decode tok/s, TTFT proxy, peak memory per build | Baseline numbers with no server in the loop |
 | Server race | `bench_engines.py` | TTFT + decode rate over OpenAI SSE, per engine | Compares servers (mlx-lm vs Rapid-MLX vs anything) fairly |
 | Ollama race | `bench_ollama.py` | Same, for everything in `ollama list` | Uses models you already downloaded; skips non-chat ones |
+| llama.cpp race | `bench_llamacpp.py` | GGUF discovery + same race, tagged `llama-cpp` | Bare engine without Ollama's wrapper |
+| Rapid-MLX race | `bench_rapid.py` | Alias race (+ `--sweep`), tagged `rapid-mlx` | Tests the 4× claim on shared methodology |
+| aiperf import | `import_aiperf.py` | aiperf aggregates as labeled rows | Independent validator, never blended into runs |
 | Report build | `make_report.py` | Merges all JSON into md/html/pdf/xlsx/json/csv + charts | A benchmark you can't re-read is one you didn't run |
 
 ## How — commands

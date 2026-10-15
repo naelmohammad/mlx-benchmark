@@ -257,14 +257,21 @@ flags for threads, batch, cache, quant:
 
 ```bash
 brew install llama.cpp
-uv run hf download ggml-org/gpt-oss-20b-GGUF \
-  --include "*.Q4_K_M.gguf" --local-dir models/gguf
-llama-server -m models/gguf/*.gguf -c 8192 --port 8001
+uv run hf download Qwen/Qwen3-8B-GGUF \
+  --include "*Q4_K_M*.gguf" --local-dir models/gguf
+llama-server -m models/gguf/Qwen3-8B-Q4_K_M.gguf -c 4096 --port 8001
 ```
 
-Then `bench_engines.py --base-url http://127.0.0.1:8001/v1 --tag llama-cpp`.
-Use this when a number looks wrong and you want to know which layer (app,
-server, engine) owns it.
+Then race it (verified: Qwen3-8B-Q4_K_M served 5/5 runs clean):
+
+```bash
+uv run python bench_llamacpp.py --base-url http://127.0.0.1:8001/v1 \
+  --model Qwen3-8B-Q4_K_M.gguf
+```
+
+Field note: llama.cpp streams thinking as `reasoning_content` (Ollama uses
+`reasoning`) — the parser handles both. Use this runner when a number looks
+wrong and you want to know which layer (app, server, engine) owns it.
 
 </details>
 
