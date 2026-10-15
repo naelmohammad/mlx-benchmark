@@ -256,6 +256,19 @@ discarded. Still off? Reproduce via `llama.cpp` to isolate the layer —
 
 </details>
 
+<details>
+<summary>Rapid-MLX 400: <code>function.name must be a non-empty string</code></summary>
+
+That error is not the benchmark — our scripts send no tools. It comes from an
+agent client (Claude Code, OpenClaw, etc.) whose request carries 100+ tool
+definitions, one with an empty or illegal name. Rapid-MLX validates tool names
+against the OpenAI spec (`^[a-zA-Z0-9_-]{1,64}$`) and rejects the whole
+request. Find the offender in the *client*: look for a dynamically generated
+or MCP tool with an empty/missing name, rename it, and retry. The server log
+line `tools=N` tells you which request failed.
+
+</details>
+
 ## FAQ
 
 - **Ollama vs MLX?** Recent Ollama routes some models through an MLX backend,
