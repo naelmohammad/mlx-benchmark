@@ -105,6 +105,37 @@ MODEL_ID=Qwen/Qwen3-30B-A3B ./run_all.sh   # whole pipeline on a bigger MoE
 uv run python bench.py --model models/Qwen3-30B-A3B-mlx-4bit
 ```
 
+## Worked example — Qwen3.5-35B-A3B end to end
+
+A 35B MoE at 4-bit is ~20 GB in memory and the closest 2026 rival to the
+3.6-35B default pick. Full convert path (you need ~160 GB free while all
+three copies coexist — check with `df -h` first):
+
+```bash
+export HF_TOKEN="hf_..."
+export MODEL_ID=Qwen/Qwen3.5-35B-A3B
+./run_all.sh   # download (~70 GB) -> bf16 -> 4-bit -> infer -> bench -> REPORT.md
+```
+
+Serve your build and race it:
+
+```bash
+# terminal 1
+uv run mlx_lm.server --model models/Qwen3.5-35B-A3B-mlx-4bit --port 8000
+# terminal 2
+uv run python bench_engines.py --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen3.5-35B-A3B-mlx-4bit --tag mlx-lm
+```
+
+Skip-the-queue alternative — download the community 4-bit build (~20 GB) and
+start at step 4, or A/B it against your own quant to see whose is better:
+
+```bash
+uv run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit \
+  --local-dir models/Qwen3.5-35B-A3B-mlx-4bit-community
+uv run python bench.py --model models/Qwen3.5-35B-A3B-mlx-4bit-community
+```
+
 ## 4. Runner options — four ways to serve a model
 
 **A. mlx-lm (this lab's path).** Convert HF → MLX yourself, serve with
