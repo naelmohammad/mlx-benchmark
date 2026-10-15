@@ -12,7 +12,14 @@ download size; 4-bit MLX is roughly a quarter of that.
 | Alibaba (Qwen) | Qwen3-30B-A3B (MoE) | `Qwen/Qwen3-30B-A3B` | ~60 GB | Only ~3B params active per token — fast |
 | Alibaba (Qwen) | Qwen3.5-9B | `Qwen/Qwen3.5-9B` | ~18 GB | 2026 generation, 262K context |
 | Alibaba (Qwen) | Qwen3.6-35B-A3B (MoE) | `Qwen/Qwen3.6-35B-A3B` | ~70 GB | Sweet spot for this machine; convert needs ~70 GB free |
-| Alibaba (Qwen) | Qwen3-Coder-30B-A3B | `Qwen/Qwen3-Coder-30B-A3B` | ~60 GB | Gated — `huggingface-cli login` first; best open coding weights |
+| Alibaba (Qwen) | Qwen3.6-27B | `Qwen/Qwen3.6-27B` | ~54 GB | Dense 3.6; simpler alternative to the MoE |
+| Alibaba (Qwen) | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | ~54 GB | Newest dense Qwen in the explorer; compare vs 3.6-27B |
+| Alibaba (Qwen) | Qwen3.5-9B | `Qwen/Qwen3.5-9B` | ~18 GB | 2026 generation, 262K context |
+| Alibaba (Qwen) | Qwen3.5-4B / 2B | `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-2B` | ~8 / ~4 GB | Small and fast; 2B runs anywhere |
+| Alibaba (Qwen) | Qwen3.5-27B | `Qwen/Qwen3.5-27B` | ~54 GB | Mid-size 3.5 for quality runs |
+| Alibaba (Qwen) | Qwen3.5-35B-A3B (MoE) | `Qwen/Qwen3.5-35B-A3B` | ~70 GB | MoE alternative to 3.6-35B — benchmark them against each other |
+| Alibaba (Qwen) | Qwen3-Coder-30B-A3B | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | ~60 GB | Best open coding weights; serve to OpenClaw/agents |
+| Alibaba (Qwen) | Qwen2.5-Coder 32B / 14B / 7B | `Qwen/Qwen2.5-Coder-32B-Instruct`, `-14B-…`, `-7B-…` | ~64 / ~28 / ~14 GB | Previous-gen coders; 7B is the quick learner loop |
 | Google | Gemma 3 27B IT | `google/gemma-3-27b-it` | ~54 GB | Gated — accept license + login; strong all-rounder |
 | Google | Gemma 4 26B-A4B IT (MoE) | `google/gemma-4-26B-A4B-it` | ~52 GB | 2026 gen; only ~4B params active — fast; login if asked |
 | Google | Gemma 4 31B IT | `google/gemma-4-31B-it` | ~62 GB | 2026 gen dense; best quality-per-GB in its class; login if asked |
@@ -65,6 +72,12 @@ data point: compare *their* quant against *yours*.
 | Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
 | Llama-3.3-70B 4-bit | `mlx-community/Llama-3.3-70B-Instruct-4bit` |
 | Muse-Glimmer-30B 4-bit | `mlx-community/Muse-Glimmer-30B-4bit` |
+| Qwen3.8-27B 4-bit | `mlx-community/Qwen3.8-27B-4bit` (or `lmstudio-community/Qwen3.8-27B-MLX-4bit`) |
+| Qwen3.6-35B-A3B 4-bit | `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` |
+| Qwen3.5-9B 4-bit | `mlx-community/Qwen3.5-9B-MLX-4bit` (or lmstudio-community build) |
+| Qwen3.5-4B 4-bit | `mlx-community/Qwen3.5-4B-MLX-4bit` |
+| Qwen3-Coder-30B 4-bit | `lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit` |
+| Qwen2.5-Coder-32B 4-bit | `lmstudio-community/Qwen2.5-Coder-32B-Instruct-MLX-4bit` |
 
 ```bash
 uv run huggingface-cli download <PORT_ID> --local-dir "models/<name>-mlx-4bit"
